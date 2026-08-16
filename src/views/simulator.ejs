@@ -1,0 +1,33 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 text-sm text-sky-900">
+  หน้านี้เป็นเครื่องมือสำหรับ <strong>ทดสอบ</strong> เท่านั้น ใช้ใส่ข้อความจำลองลงฐานข้อมูลเสมือนว่ามีคนพิมพ์ในไลน์กลุ่ม
+  เพื่อให้ลองใช้ dashboard และ AI สรุปได้โดยยังไม่ต้องมี LINE OA จริง
+</div>
+
+<form method="post" action="/simulator" class="card p-5 space-y-4 max-w-3xl">
+  <div class="grid md:grid-cols-2 gap-3">
+    <div>
+      <label class="label">กลุ่ม</label>
+      <select name="groupId" class="input" required>
+        <% groups.forEach(function (g) { %>
+          <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>><%= g.group_name || g.group_id %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div>
+      <label class="label">ชื่อผู้ส่ง</label>
+      <input name="sender" class="input" value="ปิยะ (หัวหน้าทีม)" required>
+    </div>
+  </div>
+  <div>
+    <label class="label">ข้อความ (บรรทัดละ 1 ข้อความ)</label>
+    <textarea name="messages" rows="8" class="input" placeholder="พรุ่งนี้ประชุมทีม 10 โมงนะครับ
+ฝากนภาเตรียมตัวเลขสต๊อกด้วย
+วีระช่วยสรุปรอบจัดส่งสัปดาห์นี้ส่งผมภายในวันนี้"></textarea>
+  </div>
+  <button class="btn btn-primary">บันทึกข้อความจำลอง</button>
+</form>
+
+<%- include('partials/foot') %>

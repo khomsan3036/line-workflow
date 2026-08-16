@@ -1,0 +1,62 @@
+# ==========================================================================
+# Render Blueprint - สำหรับ deploy ระบบนี้ขึ้น Render (แผน Starter)
+#
+# วิธีใช้
+#   1) push โปรเจกต์นี้ขึ้น GitHub (โฟลเดอร์ app/ ต้องเป็น root ของ repo
+#      หรือแก้ rootDir ด้านล่างให้ตรงกับโครงสร้าง repo ของคุณ)
+#   2) Render Dashboard > New > Blueprint > เลือก repo
+#   3) กรอกค่า env ที่ sync: false ในหน้า Render (จะไม่ถูกเก็บใน git)
+#   4) รัน npm run db:setup จากเครื่องตัวเองโดยชี้ DATABASE_URL ไปที่ Neon 1 ครั้ง
+#
+# หมายเหตุสำคัญ
+#   - ใช้แผน starter (ประมาณ 7 USD/เดือน) ไม่ใช่ free
+#     เพราะแผน free จะ sleep หลังไม่มี traffic 15 นาที และตื่นช้า 30-60 วินาที
+#     ซึ่ง LINE ต้องได้ 2xx กลับภายในราว 2 วินาที ข้อความจะหลุด
+#   - ฐานข้อมูลใช้ Neon (ฟรี ไม่มีวันหมดอายุ) ไม่ใช้ Render Postgres ฟรี
+#     เพราะแบบฟรีของ Render หมดอายุใน 30 วันแล้วข้อมูลถูกลบ
+#   - ENABLE_SCHEDULER=true ทำให้ตัวโปรแกรมตั้งเวลารันงานเองได้
+#     ไม่ต้องซื้อ Render Cron Job แยก (แต่ต้องไม่ scale เกิน 1 instance)
+# ==========================================================================
+services:
+  - type: web
+    name: line-workflow
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Asia/Bangkok
+      - key: MOCK_LINE
+        value: "false"
+      - key: ENABLE_SCHEDULER
+        value: "true"
+      - key: SUMMARY_CRON
+        value: 0 18 * * *
+      - key: REPORT_CRON
+        value: 0 8 * * *
+      - key: PG_POOL_MAX
+        value: "5"
+      # ค่าด้านล่างต้องกรอกในหน้า Render เอง (sync: false = ไม่เก็บลง git)
+      - key: DATABASE_URL
+        sync: false
+      - key: CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: CHANNEL_SECRET
+        sync: false
+      - key: DEFAULT_GROUP_ID
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

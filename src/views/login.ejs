@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เข้าสู่ระบบ · LINE Workflow Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>body{font-family:'IBM Plex Sans Thai',system-ui,sans-serif}</style>
+</head>
+<body class="min-h-screen bg-[#0C1628] flex items-center justify-center p-6">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-6">
+      <div class="w-14 h-14 rounded-2xl bg-[#06C755] text-[#0C1628] font-bold text-2xl flex items-center justify-center mx-auto mb-3">L</div>
+      <h1 class="text-white text-xl font-semibold">LINE Workflow Admin</h1>
+      <p class="text-slate-400 text-sm mt-1">ระบบจัดการบอทและสรุปแชทกลุ่ม</p>
+    </div>
+
+    <div class="bg-white rounded-2xl p-6 shadow-xl">
+      <% if (flash) { %>
+        <div class="mb-4 rounded-lg px-3 py-2 text-sm <%= flash.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700' %>">
+          <%= flash.text %>
+        </div>
+      <% } %>
+
+      <form method="post" action="/login" class="space-y-4">
+        <input type="hidden" name="next" value="<%= next %>">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1 font-medium">ชื่อผู้ใช้</label>
+          <input name="username" autocomplete="username" required autofocus
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#06C755]">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1 font-medium">รหัสผ่าน</label>
+          <input name="password" type="password" autocomplete="current-password" required
+                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#06C755]">
+        </div>
+        <button class="w-full bg-[#06C755] hover:bg-[#05a948] text-white rounded-lg py-2.5 text-sm font-semibold">
+          เข้าสู่ระบบ
+        </button>
+      </form>
+
+      <p class="text-[11px] text-slate-400 mt-4 text-center">
+        ค่าเริ่มต้นตั้งไว้ในไฟล์ .env (ADMIN_USERNAME / ADMIN_PASSWORD)
+      </p>
+    </div>
+  </div>
+</body>
+</html>

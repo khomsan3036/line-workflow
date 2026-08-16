@@ -1,24 +1,45 @@
-# Express Hello World
+# app - Webhook Server + Admin Dashboard
 
-เซิร์ฟเวอร์ Express ตัวเล็กที่สุด เขียนด้วย TypeScript
+โปรเจกต์ที่รันได้จริงของหลักสูตร **LINE Workflow Automation with Claude Code & MCP**
+ใช้เป็นทั้งเฉลยของ Workshop 3-5 และเป็นตัวอย่างระบบที่ส่งมอบให้ผู้ใช้จริงได้
 
-## เริ่มใช้งาน
+> สาขา `day2` / `main` (ระบบเต็ม) · เวอร์ชันของวันแรกที่ยังไม่มีฐานข้อมูลอยู่ที่สาขา `day1`
+> ดู [BRANCHES.md](../BRANCHES.md)
+
+---
+
+## เริ่มใช้งานใน 4 คำสั่ง
 
 ```bash
 npm install
+cp .env.example .env          # Windows: copy .env.example .env
+npm run db:setup              # สร้างตาราง + ใส่ข้อมูลจำลอง
 npm run dev
 ```
 
-เปิด http://localhost:3000/ จะเห็นข้อความ `Hello World`
+เปิด http://localhost:3000 ล็อกอิน `admin` / `admin1234`
 
-## คำสั่งที่มี
+ยังไม่ต้องมี LINE Official Account เพราะค่าเริ่มต้นคือ `MOCK_LINE=true`
+ระบบจะทำงานครบทุกหน้า แต่ไม่ยิง LINE API จริง
+
+---
+
+## คำสั่งทั้งหมด
 
 | คำสั่ง | ทำอะไร |
 | --- | --- |
-| `npm run dev` | รันแบบ watch (รีสตาร์ทเองเมื่อแก้ไฟล์) |
-| `npm run build` | คอมไพล์ TypeScript ไปที่ `dist/` |
-| `npm start` | รันไฟล์ที่ build แล้ว |
-| `npm run typecheck` | ตรวจ type อย่างเดียว ไม่สร้างไฟล์ |
+| `npm run dev` | เปิดเซิร์ฟเวอร์แบบ auto-reload |
+| `npm run build` + `npm start` | build เป็น JavaScript แล้วรันแบบ production |
+| `npm run typecheck` | ตรวจ TypeScript ทั้งโปรเจกต์ |
+| `npm run db:setup` | สร้างตารางและใส่ข้อมูลจำลองทั้งหมด |
+| `npm run db:reset` | ลบทุกตารางแล้วสร้างใหม่ |
+| `npm run seed:sales` | ใส่ข้อมูลยอดขาย 30 วันใหม่ (Capstone) |
+| `npm run seed:chat` | ใส่บทสนทนากลุ่มจำลองใหม่ |
+| `npm run seed:media` | สร้างไฟล์ตัวอย่างในแกลเลอรี (ไม่ต้องมี LINE OA) |
+| `npm run media:cleanup -- --days=90` | ดู/ลบไฟล์ที่เก่ากว่ากำหนดตามนโยบายเก็บข้อมูล |
+| `npm run hash-password -- <รหัส>` | สร้าง bcrypt hash สำหรับ `ADMIN_PASSWORD_HASH` |
+| `npm run daily-summary -- --dry-run` | สรุปแชทประจำวัน (ไม่ส่งออก) |
+| `npm run daily-report -- --dry-run --html` | รายงานผู้บริหาร + เขียนไฟล์ HTML |
 
 ---
 

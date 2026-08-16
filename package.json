@@ -2,16 +2,25 @@
   "name": "line-workflow-workshop",
   "version": "1.0.0",
   "private": true,
-  "description": "Express + Hello World starter",
+  "description": "LINE Workflow Automation Workshop 2026 - Webhook Recorder + Admin Dashboard",
   "main": "dist/src/index.js",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-views.mjs",
     "start": "node dist/src/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:setup": "tsx scripts/db-setup.ts",
+    "db:reset": "tsx scripts/db-setup.ts --reset",
+    "seed:chat": "tsx scripts/db-setup.ts --only=03",
+    "seed:sales": "tsx scripts/db-setup.ts --only=02",
+    "hash-password": "tsx scripts/hash-password.ts",
+    "daily-summary": "tsx scripts/daily-summary.ts",
+    "daily-report": "tsx scripts/daily-report.ts",
+    "seed:media": "tsx scripts/seed-media.ts",
+    "media:cleanup": "tsx scripts/media-cleanup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -27,8 +36,12 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.1",
     "@types/node": "^22.13.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.11",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

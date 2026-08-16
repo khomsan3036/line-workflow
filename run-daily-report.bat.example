@@ -1,0 +1,19 @@
+@echo off
+REM ==========================================================================
+REM  ไฟล์ตัวอย่างสำหรับ Windows Task Scheduler (Workshop 5 - Capstone)
+REM  วิธีใช้
+REM    1) คัดลอกไฟล์นี้เป็น run-daily-report.bat
+REM    2) แก้ path ในบรรทัด cd และแก้ groupId ให้เป็นของกลุ่มผู้บริหารคุณ
+REM    3) ดับเบิลคลิกทดสอบก่อน แล้วจึงตั้ง Task Scheduler
+REM  สำคัญ: ใน Task Scheduler ต้องตั้งช่อง "Start in" เป็นโฟลเดอร์ app ด้วย
+REM ==========================================================================
+
+cd /d "C:\line-workshop-2026\app"
+
+echo. >> logs\daily-report.log
+echo ================================================== >> logs\daily-report.log
+echo [%date% %time%] เริ่มรัน daily-report >> logs\daily-report.log
+
+call npm run daily-report -- --group=Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx >> logs\daily-report.log 2>&1
+
+echo [%date% %time%] จบการทำงาน (exit code %errorlevel%) >> logs\daily-report.log

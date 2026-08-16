@@ -1,0 +1,14 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="card p-8 text-center">
+  <div class="text-4xl mb-3">⚠️</div>
+  <h2 class="text-lg font-semibold mb-2"><%= title %></h2>
+  <p class="text-sm text-slate-600 mb-4"><%= message %></p>
+  <% if (typeof hint !== 'undefined' && hint) { %>
+    <div class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-4 text-left max-w-2xl mx-auto whitespace-pre-line"><%= hint %></div>
+  <% } %>
+  <a href="/" class="btn btn-dark mt-5">กลับหน้าภาพรวม</a>
+</div>
+
+<%- include('partials/foot') %>

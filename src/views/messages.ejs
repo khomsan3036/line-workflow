@@ -1,0 +1,97 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="card p-4">
+  <form method="get" action="/messages" class="grid md:grid-cols-6 gap-3 items-end">
+    <div class="md:col-span-2">
+      <label class="label">ค้นหาในข้อความ</label>
+      <input name="q" value="<%= filter.keyword || '' %>" class="input" placeholder="เช่น ใบขอซื้อ, ประชุม">
+    </div>
+    <div>
+      <label class="label">ผู้ส่ง</label>
+      <input name="sender" value="<%= filter.sender || '' %>" class="input" placeholder="ชื่อผู้ส่ง">
+    </div>
+    <div>
+      <label class="label">ตั้งแต่วันที่</label>
+      <input name="from" type="date" value="<%= filter.dateFrom || '' %>" class="input">
+    </div>
+    <div>
+      <label class="label">ถึงวันที่</label>
+      <input name="to" type="date" value="<%= filter.dateTo || '' %>" class="input">
+    </div>
+    <div>
+      <label class="label">ชนิด</label>
+      <select name="type" class="input">
+        <option value="">ทุกชนิด</option>
+        <% ['text','sticker','image','video','audio','file','location'].forEach(function (t) { %>
+          <option value="<%= t %>" <%= filter.messageType === t ? 'selected' : '' %>><%= t %></option>
+        <% }) %>
+      </select>
+    </div>
+    <input type="hidden" name="group" value="<%= filter.groupId || '' %>">
+    <div class="md:col-span-6 flex gap-2">
+      <button class="btn btn-dark">ค้นหา</button>
+      <a href="/messages<%= filter.groupId ? '?group=' + encodeURIComponent(filter.groupId) : '' %>" class="btn btn-ghost">ล้างเงื่อนไข</a>
+      <a class="btn btn-primary" href="/messages.csv?<%=
+          new URLSearchParams({
+            group: filter.groupId || '', q: filter.keyword || '', sender: filter.sender || '',
+            type: filter.messageType || '', from: filter.dateFrom || '', to: filter.dateTo || ''
+          }).toString() %>">ดาวน์โหลด CSV</a>
+    </div>
+  </form>
+</div>
+
+<div class="card overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-200 text-sm text-slate-600">
+    พบ <span class="font-semibold text-slate-900"><%= formatNumber(total) %></span> ข้อความ
+    · หน้า <%= page %> / <%= totalPages %>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th style="width:150px">เวลา</th>
+          <th style="width:170px">ผู้ส่ง</th>
+          <th style="width:80px">ชนิด</th>
+          <th>ข้อความ</th>
+          <th style="width:180px">กลุ่ม</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (rows.length === 0) { %>
+          <tr><td colspan="5" class="text-center text-slate-400 py-8">
+            ไม่พบข้อความตามเงื่อนไข ลองใช้หน้า "จำลองข้อความ" เพื่อใส่ข้อมูลทดสอบ
+          </td></tr>
+        <% } %>
+        <% rows.forEach(function (m) { %>
+          <tr>
+            <td class="text-slate-500 whitespace-nowrap"><%= formatDateTime(m.sent_at) %></td>
+            <td class="font-medium"><%= m.display_name || m.user_id || '-' %></td>
+            <td><span class="badge <%= m.message_type === 'text' ? 'bg-slate-100 text-slate-600' : 'bg-amber-100 text-amber-700' %>"><%= m.message_type %></span></td>
+            <td class="whitespace-pre-wrap"><%= m.message_text || '(ไม่มีเนื้อความ)' %></td>
+            <td class="text-xs text-slate-400"><%= m.group_name || m.group_id %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+
+  <% if (totalPages > 1) { %>
+  <div class="px-4 py-3 flex gap-2 items-center border-t border-slate-200">
+    <% function pageUrl(p) {
+         const params = new URLSearchParams({
+           group: filter.groupId || '', q: filter.keyword || '', sender: filter.sender || '',
+           type: filter.messageType || '', from: filter.dateFrom || '', to: filter.dateTo || '',
+           page: String(p), size: String(pageSize)
+         })
+         return '/messages?' + params.toString()
+       } %>
+    <% if (page > 1) { %><a class="btn btn-ghost" href="<%= pageUrl(page - 1) %>">ก่อนหน้า</a><% } %>
+    <span class="text-sm text-slate-500">หน้า <%= page %> / <%= totalPages %></span>
+    <% if (page < totalPages) { %><a class="btn btn-ghost" href="<%= pageUrl(page + 1) %>">ถัดไป</a><% } %>
+  </div>
+  <% } %>
+</div>
+
+<%- include('partials/foot') %>
