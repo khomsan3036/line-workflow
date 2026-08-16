@@ -1,0 +1,179 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<% if (!mediaEnabled) { %>
+<div class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+  ระบบเก็บไฟล์ถูกปิดอยู่ (MEDIA_ARCHIVE_ENABLED=false) ไฟล์ใหม่ที่เข้ากลุ่มจะไม่ถูกเก็บ
+</div>
+<% } %>
+
+<div class="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 text-sm text-sky-900">
+  ไฟล์ทั้งหมดในหน้านี้ถูกดาวน์โหลดจาก LINE มาเก็บไว้ในระบบของเราแล้ว
+  จึงเปิดดูและโหลดซ้ำได้ตลอด <strong>ไม่หมดอายุตามข้อจำกัดของ LINE</strong>
+  (เก็บด้วยวิธี <%= driver === 'local' ? 'ดิสก์ในเครื่อง' : 'object storage (S3)' %>)
+</div>
+
+<!-- สรุปพื้นที่ -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="card stat">
+    <div class="stat-label">ไฟล์ที่เก็บได้ทั้งหมด</div>
+    <div class="stat-value"><%= formatNumber(stats.total) %></div>
+    <div class="stat-hint">
+      <% if (stats.oldest) { %>เก่าสุด <%= formatDate(stats.oldest) %><% } else { %>ยังไม่มีไฟล์<% } %>
+    </div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">พื้นที่ที่ใช้ไป</div>
+    <div class="stat-value text-line"><%= formatBytes(stats.bytes) %></div>
+    <div class="stat-hint">
+      <% if (diskUsage) { %>บนดิสก์จริง <%= formatBytes(diskUsage.bytes) %> (<%= diskUsage.files %> ไฟล์)<% } else { %>-<% } %>
+    </div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">แยกตามชนิด</div>
+    <div class="text-sm mt-2 space-y-1">
+      <% if (stats.byType.length === 0) { %><span class="text-slate-400">-</span><% } %>
+      <% stats.byType.forEach(function (t) { %>
+        <div class="flex justify-between">
+          <span class="text-slate-600"><%= t.type %></span>
+          <span class="font-semibold"><%= formatNumber(t.count) %> · <%= formatBytes(t.bytes) %></span>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+  <div class="card stat <%= stats.failed > 0 ? 'border-red-300 bg-red-50' : '' %>">
+    <div class="stat-label <%= stats.failed > 0 ? 'text-red-600' : '' %>">เก็บไม่สำเร็จ</div>
+    <div class="stat-value <%= stats.failed > 0 ? 'text-red-600' : '' %>"><%= formatNumber(stats.failed) %></div>
+    <div class="stat-hint">ไฟล์ใหญ่เกินกำหนดหรือหมดอายุก่อนโหลดทัน</div>
+  </div>
+</div>
+
+<!-- ตัวกรอง -->
+<div class="card p-4">
+  <form method="get" action="/media" class="grid md:grid-cols-6 gap-3 items-end">
+    <div class="md:col-span-2">
+      <label class="label">ค้นหาชื่อไฟล์ / คำบรรยาย</label>
+      <input name="q" value="<%= filter.keyword || '' %>" class="input" placeholder="เช่น ใบเสร็จ, .pdf">
+    </div>
+    <div>
+      <label class="label">ผู้ส่ง</label>
+      <input name="sender" value="<%= filter.sender || '' %>" class="input" placeholder="ชื่อผู้ส่ง">
+    </div>
+    <div>
+      <label class="label">ชนิด</label>
+      <select name="type" class="input">
+        <option value="">ทุกชนิด</option>
+        <% ['image','video','audio','file'].forEach(function (t) { %>
+          <option value="<%= t %>" <%= filter.mediaType === t ? 'selected' : '' %>><%= t %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div>
+      <label class="label">ตั้งแต่วันที่</label>
+      <input type="date" name="from" value="<%= filter.dateFrom || '' %>" class="input">
+    </div>
+    <div>
+      <label class="label">ถึงวันที่</label>
+      <input type="date" name="to" value="<%= filter.dateTo || '' %>" class="input">
+    </div>
+    <input type="hidden" name="group" value="<%= filter.groupId || '' %>">
+    <div class="md:col-span-6 flex gap-2">
+      <button class="btn btn-dark">ค้นหา</button>
+      <a href="/media<%= filter.groupId ? '?group=' + encodeURIComponent(filter.groupId) : '' %>" class="btn btn-ghost">ล้างเงื่อนไข</a>
+      <span class="text-sm text-slate-500 self-center ml-2">
+        พบ <span class="font-semibold text-slate-900"><%= formatNumber(total) %></span> ไฟล์ · หน้า <%= page %> / <%= totalPages %>
+      </span>
+    </div>
+  </form>
+</div>
+
+<!-- แกลเลอรี -->
+<% if (rows.length === 0) { %>
+  <div class="card p-10 text-center text-slate-500 text-sm">
+    ยังไม่มีไฟล์ในระบบ<br>
+    <span class="text-xs text-slate-400">
+      เชิญบอทเข้ากลุ่มแล้วส่งรูปเข้าไป หรือรัน <code class="bg-slate-100 px-1 rounded">npm run seed:media</code> เพื่อสร้างไฟล์ตัวอย่าง
+    </span>
+  </div>
+<% } else { %>
+<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
+  <% rows.forEach(function (m) { %>
+    <div class="card overflow-hidden group">
+      <div class="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
+        <% if (m.media_type === 'image') { %>
+          <a href="/media/<%= m.id %>/file" target="_blank" class="w-full h-full">
+            <img src="/media/<%= m.id %>/file?preview=1" alt="<%= m.caption || fileLabel(m) %>"
+                 class="w-full h-full object-cover" loading="lazy">
+          </a>
+        <% } else if (m.media_type === 'video') { %>
+          <div class="text-center text-slate-500">
+            <div class="text-3xl">▶</div>
+            <div class="text-[11px] mt-1">วิดีโอ</div>
+          </div>
+        <% } else if (m.media_type === 'audio') { %>
+          <div class="text-center text-slate-500">
+            <div class="text-3xl">♪</div>
+            <div class="text-[11px] mt-1">เสียง</div>
+          </div>
+        <% } else { %>
+          <% const ext = (fileLabel(m).split('.').pop() || '').toUpperCase() %>
+          <div class="text-center text-slate-500 px-2">
+            <div class="text-3xl">📄</div>
+            <div class="text-xs font-semibold mt-1 tracking-wide"><%= ext || 'ไฟล์' %></div>
+          </div>
+        <% } %>
+      </div>
+      <div class="p-3">
+        <% const label = fileLabel(m) %>
+        <div class="text-xs font-medium truncate" title="<%= m.caption || label %>">
+          <%= m.caption || label %>
+        </div>
+        <% if (m.caption) { %>
+          <div class="text-[11px] text-slate-400 truncate font-mono" title="<%= label %>"><%= label %></div>
+        <% } %>
+        <div class="text-[11px] text-slate-400 mt-1 truncate"><%= m.display_name || 'ไม่ทราบผู้ส่ง' %></div>
+        <div class="text-[11px] text-slate-400"><%= formatDateTime(m.sent_at) %></div>
+        <form method="post" action="/media/<%= m.id %>/caption" class="mt-2 flex gap-1">
+          <input type="hidden" name="groupId" value="<%= filter.groupId || '' %>">
+          <input type="hidden" name="q" value="<%= filter.keyword || '' %>">
+          <input type="hidden" name="type" value="<%= filter.mediaType || '' %>">
+          <input type="hidden" name="page" value="<%= page %>">
+          <input name="caption" value="<%= m.caption || '' %>" maxlength="255"
+                 class="input text-[11px] flex-1 min-w-0" style="height:26px;padding:0 8px"
+                 placeholder="ตั้งคำบรรยาย เช่น ใบเสร็จค่าขนส่ง">
+          <button class="btn btn-ghost text-xs" style="height:26px;padding:0 8px">บันทึก</button>
+        </form>
+        <div class="flex items-center justify-between mt-2">
+          <span class="badge bg-slate-100 text-slate-600"><%= formatBytes(Number(m.size_bytes || 0)) %></span>
+          <div class="flex gap-1">
+            <a class="btn btn-ghost text-xs" style="height:26px;padding:0 8px"
+               href="/media/<%= m.id %>/file?download=1">โหลด</a>
+            <form method="post" action="/media/<%= m.id %>/delete" onsubmit="return confirm('ลบไฟล์นี้ออกจากระบบ?')">
+              <input type="hidden" name="groupId" value="<%= filter.groupId || '' %>">
+              <button class="btn btn-danger text-xs" style="height:26px;padding:0 8px">ลบ</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% }) %>
+</div>
+
+<% if (totalPages > 1) { %>
+<div class="card p-3 flex gap-2 items-center">
+  <% function pageUrl(p) {
+       const params = new URLSearchParams({
+         group: filter.groupId || '', q: filter.keyword || '', sender: filter.sender || '',
+         type: filter.mediaType || '', from: filter.dateFrom || '', to: filter.dateTo || '',
+         page: String(p), size: String(pageSize)
+       })
+       return '/media?' + params.toString()
+     } %>
+  <% if (page > 1) { %><a class="btn btn-ghost" href="<%= pageUrl(page - 1) %>">ก่อนหน้า</a><% } %>
+  <span class="text-sm text-slate-500">หน้า <%= page %> / <%= totalPages %></span>
+  <% if (page < totalPages) { %><a class="btn btn-ghost" href="<%= pageUrl(page + 1) %>">ถัดไป</a><% } %>
+</div>
+<% } %>
+<% } %>
+
+<%- include('partials/foot') %>

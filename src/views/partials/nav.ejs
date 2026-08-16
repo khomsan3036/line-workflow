@@ -1,0 +1,90 @@
+  <!-- Sidebar -->
+  <aside class="w-64 shrink-0 bg-navy text-white flex flex-col">
+    <div class="px-5 py-5 border-b border-white/10">
+      <div class="flex items-center gap-2">
+        <div class="w-9 h-9 rounded-lg bg-line flex items-center justify-center font-bold text-navy">L</div>
+        <div>
+          <div class="font-semibold leading-tight">LINE Workflow</div>
+          <div class="text-[11px] text-slate-400">Admin Dashboard 2026</div>
+        </div>
+      </div>
+    </div>
+
+    <%
+      // ไอคอนเป็น inline SVG (ไม่พึ่ง icon font จากภายนอก จะได้ไม่ค้างตอนเน็ตช้า)
+      // ทุกตัววาดบน viewBox 24x24 เส้นหนา 1.8 ให้น้ำหนักเท่ากันทั้งชุด
+      const icon = {
+        overview:  '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',
+        chat:      '<path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6a8 8 0 0 1 8-8h2a8 8 0 0 1 8 3z"/>',
+        summary:   '<path d="M12 3l2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-2.9L6.7 19.6l1.1-6L3.4 9.4l6-.8z"/>',
+        tasks:     '<path d="M4 5h16v14H4z"/><path d="M8.5 12.2l2.3 2.3 4.7-4.7"/>',
+        send:      '<path d="M21 3L3 10.5l7.2 2.8L13 21z"/>',
+        media:     '<path d="M4 5h16v14H4z"/><circle cx="9" cy="10" r="1.6"/><path d="M4 16.5l4.8-4 3.4 2.8 3-2.4 4.8 4"/>',
+        report:    '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+        groups:    '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6M17.5 14.4A5 5 0 0 1 20.5 19"/>',
+        simulator: '<path d="M7 3h10v18H7z"/><path d="M11 18.2h2"/>',
+        logs:      '<path d="M6 3h9l3 3v15H6z"/><path d="M9 11h6M9 15h6"/>'
+      }
+      const q = selectedGroup ? '?group=' + encodeURIComponent(selectedGroup) : ''
+      const isOn = (p) => (p === '/' ? currentPath === '/' : currentPath.startsWith(p))
+      const menu = [
+        { href: '/' + q,           match: '/',          key: 'overview',  label: 'ภาพรวม' },
+        { href: '/messages' + q,   match: '/messages',  key: 'chat',      label: 'ประวัติแชท' },
+        { href: '/summaries' + q,  match: '/summaries', key: 'summary',   label: 'AI สรุปบทสนทนา' },
+        { href: '/tasks' + q,      match: '/tasks',     key: 'tasks',     label: 'ติดตามงาน' },
+        { href: '/send' + q,       match: '/send',      key: 'send',      label: 'ส่งข้อความ' },
+        { href: '/media' + q,      match: '/media',     key: 'media',     label: 'แกลเลอรีไฟล์' },
+        { href: '/sales',          match: '/sales',     key: 'report',    label: 'รายงานผู้บริหาร' }
+      ]
+      const tools = [
+        { href: '/groups',    match: '/groups',    key: 'groups',    label: 'จัดการกลุ่ม' },
+        { href: '/simulator', match: '/simulator', key: 'simulator', label: 'จำลองข้อความ' },
+        { href: '/logs',      match: '/logs',      key: 'logs',      label: 'Log การส่ง' }
+      ]
+      const svg = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon[k]}</svg>`
+    %>
+    <nav class="p-3 space-y-1 flex-1">
+      <% menu.forEach(function (m) { %>
+        <a href="<%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
+      <% }) %>
+      <div class="pt-3 mt-3 border-t border-white/10 text-[11px] text-slate-500 px-3 pb-1">เครื่องมือ</div>
+      <% tools.forEach(function (m) { %>
+        <a href="<%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
+      <% }) %>
+    </nav>
+
+    <div class="p-3 border-t border-white/10">
+      <div class="px-2 pb-2 text-[11px] <%= mockLine ? 'text-amber-400' : 'text-line' %>">
+        <%= mockLine ? 'โหมด MOCK: ไม่ยิง LINE API จริง' : 'โหมด LIVE: ส่งเข้า LINE จริง' %>
+      </div>
+      <form method="post" action="/logout">
+        <button class="w-full text-left nav-link">ออกจากระบบ (<%= user %>)</button>
+      </form>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0">
+    <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-4 flex-wrap">
+      <h1 class="text-lg font-semibold flex-1"><%= title %></h1>
+      <% if (groups && groups.length > 0) { %>
+      <form method="get" action="<%= currentPath === '/' ? '/' : currentPath %>" class="flex items-center gap-2">
+        <label class="text-xs text-slate-500">กลุ่ม</label>
+        <select name="group" class="input w-64" onchange="this.form.submit()">
+          <option value="">ทุกกลุ่ม</option>
+          <% groups.forEach(function (g) { %>
+            <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>>
+              <%= g.group_name || g.group_id %>
+            </option>
+          <% }) %>
+        </select>
+      </form>
+      <% } %>
+    </header>
+
+    <div class="p-6 space-y-6">
+      <% if (typeof flash !== 'undefined' && flash) { %>
+        <div class="rounded-xl px-4 py-3 text-sm <%= flash.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200' %>">
+          <%= flash.text %>
+        </div>
+      <% } %>

@@ -1,0 +1,147 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<% if (!hasData) { %>
+<div class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+  ยังไม่มีข้อมูลยอดขายในระบบ - รัน <code class="bg-white px-1 rounded">npm run seed:sales</code> เพื่อใส่ข้อมูลจำลอง 30 วัน
+</div>
+<% } %>
+
+<div class="card p-4">
+  <form method="get" action="/sales" class="flex gap-3 items-end flex-wrap">
+    <div>
+      <label class="label">วันที่รายงาน</label>
+      <input type="date" name="date" value="<%= date %>" class="input">
+    </div>
+    <button class="btn btn-dark">ดูรายงาน</button>
+  </form>
+</div>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="card stat">
+    <div class="stat-label">ยอดขายรวม</div>
+    <div class="stat-value"><%= formatMoney(sales.totalAmount) %></div>
+    <div class="stat-hint <%= sales.changePct === null ? '' : (sales.changePct >= 0 ? 'text-emerald-600' : 'text-red-600') %>">
+      <% if (sales.changePct === null) { %>ไม่มีข้อมูลเปรียบเทียบ
+      <% } else { %><%= sales.changePct >= 0 ? '▲' : '▼' %> <%= Math.abs(sales.changePct).toFixed(1) %>% เทียบวันก่อน<% } %>
+    </div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">จำนวนบิล</div>
+    <div class="stat-value"><%= formatNumber(sales.orderCount) %></div>
+    <div class="stat-hint">ไม่นับรายการที่ยกเลิก</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">ยอดเฉลี่ยต่อบิล</div>
+    <div class="stat-value"><%= formatMoney(sales.avgOrder) %></div>
+    <div class="stat-hint">
+      <%= formatMoney(sales.totalAmount) %> ÷ <%= formatNumber(sales.orderCount) %> บิล
+    </div>
+  </div>
+  <div class="card stat <%= anomalies.length > 0 ? 'border-red-300 bg-red-50' : '' %>">
+    <div class="stat-label <%= anomalies.length > 0 ? 'text-red-600' : '' %>">รายการผิดปกติ</div>
+    <div class="stat-value <%= anomalies.length > 0 ? 'text-red-600' : '' %>"><%= anomalies.length %></div>
+    <div class="stat-hint">ตรวจอัตโนมัติ 4 เกณฑ์</div>
+  </div>
+</div>
+
+<div class="card p-5">
+  <div class="card-title mb-3">แนวโน้มยอดขาย 14 วัน</div>
+  <canvas id="chartSales" height="90"></canvas>
+</div>
+
+<% if (anomalies.length > 0) { %>
+<div class="card p-5 border-red-200">
+  <div class="card-title text-red-700 mb-3">รายการที่ควรตรวจสอบ (<%= anomalies.length %>)</div>
+  <ul class="space-y-2">
+    <% anomalies.forEach(function (a) { %>
+      <li class="text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+        <span class="font-semibold text-red-700"><%= a.title %></span>
+        <div class="text-red-900/80 text-xs mt-0.5"><%= a.detail %></div>
+      </li>
+    <% }) %>
+  </ul>
+</div>
+<% } %>
+
+<div class="card p-5">
+  <div class="card-title mb-1">ส่งรายงานเข้ากลุ่มผู้บริหาร</div>
+  <p class="text-xs text-slate-500 mb-3">
+    ระบบจะประกอบเป็น Flex Message พร้อมส่วนแจ้งเตือนสีแดงเมื่อพบรายการผิดปกติ - แนะนำให้กด dry-run ตรวจก่อนส่งจริง
+  </p>
+  <form method="post" action="/sales/send" class="flex gap-3 items-end flex-wrap">
+    <input type="hidden" name="date" value="<%= date %>">
+    <div class="min-w-[260px]">
+      <label class="label">กลุ่มปลายทาง</label>
+      <select name="groupId" class="input" required>
+        <option value="">-- เลือกกลุ่ม --</option>
+        <% groups.forEach(function (g) { %>
+          <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>><%= g.group_name || g.group_id %></option>
+        <% }) %>
+      </select>
+    </div>
+    <button name="action" value="dry" class="btn btn-ghost">ทดสอบ dry-run</button>
+    <button name="action" value="send" class="btn btn-primary">ส่งรายงาน</button>
+  </form>
+  <div class="mt-3 pt-3 border-t border-slate-100 text-[11px] <%= scheduleNote ? 'text-line' : 'text-slate-400' %>">
+    <% if (scheduleNote) { %>
+      ตั้งเวลา<%= scheduleNote %> ไว้แล้ว (REPORT_CRON = <%= reportCron %>)
+    <% } else { %>
+      ยังไม่ได้เปิดตัวตั้งเวลาในตัวโปรแกรม - ตั้ง ENABLE_SCHEDULER=true เพื่อให้ส่งเองทุกวันตาม REPORT_CRON (<%= reportCron %>)
+    <% } %>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="card overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-slate-200 card-title">ยอดขายตามสาขา</div>
+    <table class="w-full">
+      <tbody>
+        <% sales.branches.forEach(function (b) { %>
+          <tr><td><%= b.branch %></td><td class="text-right font-medium whitespace-nowrap"><%= formatMoney(b.amount) %></td></tr>
+        <% }) %>
+        <% if (sales.branches.length === 0) { %><tr><td class="text-slate-400 text-center py-6">ไม่มีข้อมูล</td></tr><% } %>
+      </tbody>
+    </table>
+  </div>
+  <div class="card overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-slate-200 card-title">ยอดขายตามช่องทาง</div>
+    <table class="w-full">
+      <tbody>
+        <% sales.channels.forEach(function (c) { %>
+          <tr><td><%= c.channel %></td><td class="text-right font-medium whitespace-nowrap"><%= formatMoney(c.amount) %></td></tr>
+        <% }) %>
+        <% if (sales.channels.length === 0) { %><tr><td class="text-slate-400 text-center py-6">ไม่มีข้อมูล</td></tr><% } %>
+      </tbody>
+    </table>
+  </div>
+  <div class="card overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-slate-200 card-title">สินค้าขายดี 5 อันดับ</div>
+    <table class="w-full">
+      <tbody>
+        <% sales.topProducts.forEach(function (p) { %>
+          <tr><td><%= p.product %><div class="text-[11px] text-slate-400"><%= p.qty %> ชิ้น</div></td>
+              <td class="text-right font-medium whitespace-nowrap"><%= formatMoney(p.amount) %></td></tr>
+        <% }) %>
+        <% if (sales.topProducts.length === 0) { %><tr><td class="text-slate-400 text-center py-6">ไม่มีข้อมูล</td></tr><% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const trend = <%- JSON.stringify(trend) %>
+  new Chart(document.getElementById('chartSales'), {
+    type: 'bar',
+    data: {
+      labels: trend.map(t => t.day.slice(5)),
+      datasets: [{ label: 'ยอดขาย (บาท)', data: trend.map(t => t.amount), backgroundColor: '#1855A3' }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => (v / 1000).toLocaleString('th-TH') + 'k' } } }
+    }
+  })
+</script>
+
+<%- include('partials/foot') %>

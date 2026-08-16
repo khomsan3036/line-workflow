@@ -1,0 +1,92 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <form method="post" action="/tasks" class="card p-5 space-y-3">
+    <div class="card-title">เพิ่มงานด้วยตนเอง</div>
+    <div>
+      <label class="label">กลุ่ม</label>
+      <select name="groupId" class="input" required>
+        <% groups.forEach(function (g) { %>
+          <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>><%= g.group_name || g.group_id %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div>
+      <label class="label">ผู้รับผิดชอบ</label>
+      <input name="assignee" class="input" placeholder="เช่น นภา">
+    </div>
+    <div>
+      <label class="label">รายละเอียดงาน</label>
+      <textarea name="taskText" rows="3" class="input" required placeholder="เช่น ทำใบขอซื้อแอร์ 6 เครื่องส่งฝ่ายจัดซื้อ"></textarea>
+    </div>
+    <div>
+      <label class="label">กำหนดเสร็จ (ข้อความอิสระ)</label>
+      <input name="dueText" class="input" placeholder="เช่น ภายในวันนี้, ศุกร์นี้">
+    </div>
+    <button class="btn btn-dark w-full justify-center">เพิ่มงาน</button>
+
+    <div class="pt-3 border-t border-slate-100">
+      <div class="card-title mb-2">ส่งการ์ดเตือนงานค้างเข้ากลุ่ม</div>
+      <div class="flex gap-2">
+        <button form="remindForm" name="action" value="dry" class="btn btn-ghost flex-1 justify-center">dry-run</button>
+        <button form="remindForm" name="action" value="send" class="btn btn-primary flex-1 justify-center">ส่งเตือน</button>
+      </div>
+    </div>
+  </form>
+
+  <form id="remindForm" method="post" action="/tasks/remind" class="hidden">
+    <input type="hidden" name="groupId" value="<%= selectedGroup %>">
+  </form>
+
+  <div class="card overflow-hidden lg:col-span-2">
+    <div class="px-5 py-3.5 border-b border-slate-200 card-title">
+      รายการงาน (<%= tasks.filter(function (t) { return t.status === 'open' }).length %> รายการที่ยังค้าง)
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr><th style="width:120px">ผู้รับผิดชอบ</th><th>งาน</th><th style="width:110px">กำหนด</th><th style="width:70px">ที่มา</th><th style="width:170px">จัดการ</th></tr>
+        </thead>
+        <tbody>
+          <% if (tasks.length === 0) { %>
+            <tr><td colspan="5" class="text-center text-slate-400 py-8">
+              ยังไม่มีงาน ลองไปหน้า "AI สรุปบทสนทนา" แล้วสั่งสรุป ระบบจะสกัดงานมาให้อัตโนมัติ
+            </td></tr>
+          <% } %>
+          <% tasks.forEach(function (t) { %>
+            <tr class="<%= t.status !== 'open' ? 'opacity-50' : '' %>">
+              <td class="font-medium"><%= t.assignee || 'ไม่ระบุ' %></td>
+              <td class="<%= t.status === 'done' ? 'line-through' : '' %>"><%= t.task_text %></td>
+              <td class="text-xs text-amber-700"><%= t.due_text || '-' %></td>
+              <td><span class="badge <%= t.source === 'ai' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600' %>"><%= t.source %></span></td>
+              <td>
+                <div class="flex gap-1">
+                  <% if (t.status === 'open') { %>
+                    <form method="post" action="/tasks/<%= t.id %>/status">
+                      <input type="hidden" name="status" value="done">
+                      <input type="hidden" name="groupId" value="<%= selectedGroup %>">
+                      <button class="btn btn-ghost text-xs">เสร็จแล้ว</button>
+                    </form>
+                  <% } else { %>
+                    <form method="post" action="/tasks/<%= t.id %>/status">
+                      <input type="hidden" name="status" value="open">
+                      <input type="hidden" name="groupId" value="<%= selectedGroup %>">
+                      <button class="btn btn-ghost text-xs">กลับเป็นค้าง</button>
+                    </form>
+                  <% } %>
+                  <form method="post" action="/tasks/<%= t.id %>/delete" onsubmit="return confirm('ลบงานนี้?')">
+                    <input type="hidden" name="groupId" value="<%= selectedGroup %>">
+                    <button class="btn btn-danger text-xs">ลบ</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<%- include('partials/foot') %>

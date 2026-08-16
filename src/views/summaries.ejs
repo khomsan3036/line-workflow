@@ -1,0 +1,62 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="card p-5">
+  <div class="card-title mb-1">สั่ง AI สรุปบทสนทนา</div>
+  <p class="text-xs text-slate-500 mb-4">
+    ระบบจะอ่านข้อความของกลุ่มในวันที่เลือก สรุปประเด็นสำคัญ และสกัด "งานที่มีคนรับไปทำ" เข้าหน้าติดตามงานให้อัตโนมัติ
+  </p>
+  <form method="post" action="/summaries/generate" class="grid md:grid-cols-4 gap-3 items-end">
+    <div class="md:col-span-2">
+      <label class="label">กลุ่ม</label>
+      <select name="groupId" class="input" required>
+        <option value="">-- เลือกกลุ่ม --</option>
+        <% groups.forEach(function (g) { %>
+          <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>>
+            <%= g.group_name || g.group_id %> (<%= formatNumber(g.message_count) %> ข้อความ)
+          </option>
+        <% }) %>
+      </select>
+    </div>
+    <div>
+      <label class="label">วันที่</label>
+      <input type="date" name="date" value="<%= date %>" class="input">
+    </div>
+    <div><button class="btn btn-primary w-full justify-center">สรุปด้วย AI</button></div>
+  </form>
+</div>
+
+<% if (summaries.length === 0) { %>
+  <div class="card p-8 text-center text-slate-500 text-sm">
+    ยังไม่มีประวัติการสรุป ลองเลือกกลุ่มด้านบนแล้วกด "สรุปด้วย AI"
+  </div>
+<% } %>
+
+<% summaries.forEach(function (s) { %>
+  <div class="card p-5">
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div>
+        <div class="font-semibold"><%= formatDate(s.summary_date) %></div>
+        <div class="text-xs text-slate-400 mt-0.5">
+          <%= formatNumber(s.message_count) %> ข้อความ · โมเดล <%= s.model %> · สรุปเมื่อ <%= formatDateTime(s.created_at) %>
+        </div>
+      </div>
+      <form method="post" action="/summaries/<%= s.id %>/send" class="flex gap-2">
+        <button name="action" value="dry" class="btn btn-ghost">ทดสอบ dry-run</button>
+        <button name="action" value="send" class="btn btn-primary">ส่งสรุปเข้ากลุ่ม</button>
+      </form>
+    </div>
+
+    <div class="mt-4 bg-slate-50 rounded-xl p-4 text-sm whitespace-pre-wrap"><%= s.summary_text %></div>
+
+    <% if (s.topics && s.topics.length > 0) { %>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <% s.topics.forEach(function (t) { %>
+          <span class="badge bg-slate-100 text-slate-600"><%= t %></span>
+        <% }) %>
+      </div>
+    <% } %>
+  </div>
+<% }) %>
+
+<%- include('partials/foot') %>

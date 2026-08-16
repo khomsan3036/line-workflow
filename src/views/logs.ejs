@@ -1,0 +1,43 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="card overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-200 text-sm text-slate-600">
+    ทุกข้อความที่ระบบส่งออก (รวม dry-run และโหมด mock) ย้อนหลัง 200 รายการ
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full">
+      <thead>
+        <tr><th style="width:150px">เวลา</th><th style="width:90px">ชนิด</th><th style="width:200px">ปลายทาง</th><th>ข้อความ</th><th style="width:110px">สถานะ</th><th style="width:110px">สั่งโดย</th></tr>
+      </thead>
+      <tbody>
+        <% if (logs.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-slate-400 py-8">ยังไม่มีประวัติการส่ง</td></tr>
+        <% } %>
+        <% logs.forEach(function (l) { %>
+          <tr>
+            <td class="text-slate-500 whitespace-nowrap"><%= formatDateTime(l.created_at) %></td>
+            <td><span class="badge bg-slate-100 text-slate-600"><%= l.message_kind %></span></td>
+            <td class="text-xs">
+              <%= l.target_name || l.target_type %>
+              <% if (l.target_id) { %><div class="text-[10px] text-slate-400 font-mono"><%= l.target_id %></div><% } %>
+            </td>
+            <td class="text-xs"><%= (l.preview || '').slice(0, 160) %></td>
+            <td>
+              <span class="badge <%= l.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : l.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600' %>"><%= l.status %></span>
+              <% if (l.error) { %><div class="text-[10px] text-red-500 mt-1"><%= l.error %></div><% } %>
+            </td>
+            <td class="text-xs text-slate-500"><%= l.sent_by || '-' %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 text-sm text-sky-900">
+  ทุกการส่งออกจากระบบผ่านชั้นเดียวกันเสมอ จึงตรวจย้อนหลังได้ว่าใครสั่งส่งอะไร ไปที่ไหน สำเร็จหรือไม่
+  แยกได้ชัดว่าเป็นคนสั่ง (<code class="font-mono text-xs">admin</code>) หรือระบบตั้งเวลา (<code class="font-mono text-xs">scheduler</code>)
+</div>
+
+<%- include('partials/foot') %>

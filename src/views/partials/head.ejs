@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> · LINE Workflow Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!--
+    ฟอนต์ 2 ตัวทำงานร่วมกัน: Inter ไม่มีสระและวรรณยุกต์ไทย เบราว์เซอร์จึงตกมาใช้
+    Anuphan ให้อัตโนมัติเฉพาะตัวอักษรไทย ผลคือเลขกับภาษาอังกฤษเป็น Inter
+    ส่วนภาษาไทยเป็น Anuphan โดยไม่ต้องแยก class ใด ๆ ในหน้าเว็บ
+  -->
+  <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            line: '#06C755',
+            navy: '#0C1628',
+            navy2: '#152238'
+          },
+          fontFamily: {
+            sans: ['Inter', 'Anuphan', 'system-ui', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: 'Inter', 'Anuphan', system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+
+    .card { background:#fff; border:1px solid #E8ECF1; border-radius:16px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+
+    /* การ์ดตัวเลขสรุป (KPI) - ใช้ร่วมกันทุกหน้าเพื่อให้หน้าตาเหมือนกันหมด */
+    .stat { padding:1.25rem 1.25rem; }
+    .stat-label { font-size:.8125rem; color:#667085; font-weight:500; }
+    .stat-value { font-size:2rem; line-height:1.15; font-weight:700; margin-top:.35rem; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+    .stat-hint { font-size:.75rem; color:#98A2B3; margin-top:.35rem; }
+    .card-title { font-size:.9375rem; font-weight:600; letter-spacing:-.01em; }
+
+    .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.5rem .9rem; border-radius:9px; font-size:.875rem; font-weight:500; }
+    .btn-primary { background:#06C755; color:#fff; }
+    .btn-primary:hover { background:#05a948; }
+    .btn-dark { background:#0C1628; color:#fff; }
+    .btn-dark:hover { background:#152238; }
+    .btn-ghost { background:#F3F4F6; color:#374151; }
+    .btn-ghost:hover { background:#E5E7EB; }
+    .btn-danger { background:#FEE2E2; color:#B91C1C; }
+    .input { width:100%; padding:.5rem .7rem; border:1px solid #D1D5DB; border-radius:9px; font-size:.875rem; }
+    .input:focus { outline:2px solid #06C755; outline-offset:-1px; }
+    .label { display:block; font-size:.75rem; color:#6B7280; margin-bottom:.25rem; font-weight:500; }
+    .nav-link { display:flex; align-items:center; gap:.7rem; padding:.6rem .8rem; border-radius:9px; color:#CBD5E1; font-size:.9rem; }
+    .nav-link:hover { background:#152238; color:#fff; }
+    .nav-link.active { background:#06C755; color:#fff; font-weight:600; }
+    .nav-link svg { width:18px; height:18px; flex-shrink:0; opacity:.85; }
+    .nav-link.active svg { opacity:1; }
+
+    /* รายการ log การส่ง - ใช้แทนตารางในการ์ดแคบ ๆ ไม่ให้คอลัมน์สถานะโดนตัด */
+    .log-row { display:flex; align-items:flex-start; gap:.75rem; padding:.6rem 0; border-bottom:1px solid #F3F4F6; }
+    .log-row:last-child { border-bottom:0; }
+    .log-time { font-size:.75rem; color:#98A2B3; white-space:nowrap; font-variant-numeric:tabular-nums; padding-top:.1rem; }
+    .log-main { flex:1; min-width:0; }
+    .log-text { font-size:.8125rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .log-target { font-size:.6875rem; color:#98A2B3; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .badge { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.7rem; font-weight:600; }
+    th { text-align:left; font-size:.75rem; color:#6B7280; font-weight:600; padding:.6rem .75rem; border-bottom:1px solid #E5E7EB; white-space:nowrap; }
+    td { font-size:.875rem; padding:.6rem .75rem; border-bottom:1px solid #F3F4F6; vertical-align:top; }
+    tr:hover td { background:#FAFAFA; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<div class="flex min-h-screen">

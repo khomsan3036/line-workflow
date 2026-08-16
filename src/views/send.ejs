@@ -1,0 +1,181 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<% if (mockLine) { %>
+<div class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+  ระบบอยู่ในโหมด <strong>MOCK</strong> ข้อความจะถูกบันทึกลง log แต่ยังไม่ยิงเข้า LINE จริง
+  เมื่อพร้อมส่งจริงให้ตั้ง <code class="bg-white px-1 rounded">MOCK_LINE=false</code> และใส่ CHANNEL_ACCESS_TOKEN ในไฟล์ .env
+</div>
+<% } %>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <form method="post" action="/send" class="card p-5 space-y-4">
+    <div class="card-title">ประกอบข้อความ</div>
+
+    <div class="grid md:grid-cols-2 gap-3">
+      <div>
+        <label class="label">ปลายทาง</label>
+        <select name="targetType" class="input" id="targetType">
+          <option value="group" <%= form.targetType === 'group' || !form.targetType ? 'selected' : '' %>>ไลน์กลุ่ม</option>
+          <option value="user" <%= form.targetType === 'user' ? 'selected' : '' %>>ผู้ใช้รายบุคคล (userId)</option>
+          <option value="broadcast" <%= form.targetType === 'broadcast' ? 'selected' : '' %>>Broadcast ถึงผู้ติดตาม OA ทุกคน</option>
+        </select>
+      </div>
+      <div>
+        <label class="label">เลือกกลุ่ม / ใส่ ID ปลายทาง</label>
+        <select name="targetId" class="input" id="targetSelect">
+          <option value="">-- เลือกกลุ่ม --</option>
+          <% groups.forEach(function (g) { %>
+            <option value="<%= g.group_id %>" <%= (form.targetId || selectedGroup) === g.group_id ? 'selected' : '' %>>
+              <%= g.group_name || g.group_id %>
+            </option>
+          <% }) %>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label class="label">ชนิดข้อความ</label>
+      <div class="flex gap-4 text-sm">
+        <label class="flex items-center gap-2">
+          <input type="radio" name="kind" value="text" <%= form.kind !== 'flex' ? 'checked' : '' %> onchange="toggleKind()"> ข้อความธรรมดา
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" name="kind" value="flex" <%= form.kind === 'flex' ? 'checked' : '' %> onchange="toggleKind()"> Flex Message
+        </label>
+      </div>
+    </div>
+
+    <!-- text -->
+    <div id="blockText" class="<%= form.kind === 'flex' ? 'hidden' : '' %>">
+      <label class="label">เนื้อความ</label>
+      <textarea name="text" rows="6" class="input" placeholder="เช่น แจ้งประชุมทีมปฏิบัติการ วันจันทร์ 9:00 น. ห้องประชุมชั้น 3"><%= form.text || '' %></textarea>
+    </div>
+
+    <!-- flex -->
+    <div id="blockFlex" class="space-y-3 <%= form.kind === 'flex' ? '' : 'hidden' %>">
+      <div>
+        <label class="label">วิธีสร้าง Flex</label>
+        <select name="flexMode" class="input" id="flexMode" onchange="toggleFlexMode()">
+          <option value="template" <%= form.flexMode !== 'raw' ? 'selected' : '' %>>ใช้เทมเพลตประกาศภายในองค์กร</option>
+          <option value="raw" <%= form.flexMode === 'raw' ? 'selected' : '' %>>วาง JSON เอง (จาก Flex Simulator)</option>
+        </select>
+      </div>
+
+      <div id="blockTemplate" class="space-y-3 <%= form.flexMode === 'raw' ? 'hidden' : '' %>">
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="label">หัวเรื่อง</label>
+            <input name="annTitle" value="<%= form.annTitle || 'ประกาศวันหยุดบริษัท' %>" class="input">
+          </div>
+          <div>
+            <label class="label">หมวด / ผู้ออกประกาศ</label>
+            <input name="annCategory" value="<%= form.annCategory || 'ฝ่ายบุคคลและธุรการ' %>" class="input">
+          </div>
+        </div>
+        <div>
+          <label class="label">เนื้อหา</label>
+          <textarea name="annBody" rows="3" class="input"><%= form.annBody || 'บริษัทกำหนดวันหยุดพิเศษเพิ่มเติมในเดือนสิงหาคม ขอให้ทุกฝ่ายวางแผนงานล่วงหน้า' %></textarea>
+        </div>
+        <div>
+          <label class="label">รายการย่อย (บรรทัดละ 1 ข้อ)</label>
+          <textarea name="annBullets" rows="3" class="input"><%= form.annBullets || 'วันจันทร์ที่ 10 สิงหาคม 2569 หยุดทำการ\nฝ่ายจัดส่งทำงานปกติ\nติดต่อ HR ต่อ 101' %></textarea>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="label">ข้อความบนปุ่ม (ไม่ใส่ก็ได้)</label>
+            <input name="annButtonLabel" value="<%= form.annButtonLabel || '' %>" class="input" placeholder="อ่านรายละเอียด">
+          </div>
+          <div>
+            <label class="label">ลิงก์ปุ่ม (ต้องเป็น https)</label>
+            <input name="annButtonUrl" value="<%= form.annButtonUrl || '' %>" class="input" placeholder="https://www.itgenius.co.th">
+          </div>
+        </div>
+      </div>
+
+      <div id="blockRaw" class="<%= form.flexMode === 'raw' ? '' : 'hidden' %>">
+        <label class="label">Flex JSON (เฉพาะส่วน contents ของ bubble/carousel)</label>
+        <textarea name="rawJson" rows="10" class="input font-mono text-xs" placeholder='{"type":"bubble", ...}'><%= form.rawJson || '' %></textarea>
+        <p class="text-[11px] text-slate-400 mt-1">
+          ออกแบบได้ที่ <a class="text-line" href="https://developers.line.biz/flex-simulator/" target="_blank">Flex Message Simulator</a>
+          แล้วคัดลอกมาวางที่นี่
+        </p>
+      </div>
+
+      <div>
+        <label class="label">altText (ข้อความสำรองที่แสดงในรายการแชทและ notification)</label>
+        <input name="altText" value="<%= form.altText || '' %>" class="input" placeholder="ประกาศจากฝ่ายบุคคล">
+      </div>
+    </div>
+
+    <div class="flex gap-2 pt-2 border-t border-slate-100">
+      <button name="action" value="preview" class="btn btn-ghost">ดูตัวอย่าง</button>
+      <button name="action" value="dry" class="btn btn-dark">ทดสอบ dry-run</button>
+      <button name="action" value="send" class="btn btn-primary">ส่งจริง</button>
+    </div>
+  </form>
+
+  <div class="space-y-4">
+    <% if (preview) { %>
+      <div class="card p-5">
+        <div class="card-title mb-2">ตัวอย่างข้อความที่จะส่ง</div>
+        <% if (preview.kind === 'text') { %>
+          <div class="bg-slate-100 rounded-xl p-4 text-sm whitespace-pre-wrap"><%= preview.text %></div>
+        <% } else { %>
+          <div class="text-xs text-slate-500 mb-1">altText: <%= preview.altText %></div>
+          <pre class="bg-navy text-slate-100 rounded-xl p-4 text-[11px] overflow-x-auto max-h-96"><%= JSON.stringify(preview.contents, null, 2) %></pre>
+          <p class="text-[11px] text-slate-400 mt-2">
+            คัดลอก JSON ด้านบนไปวางใน Flex Message Simulator เพื่อดูหน้าตาจริงก่อนส่ง
+          </p>
+        <% } %>
+      </div>
+    <% } %>
+
+    <div class="card overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-200 card-title">ประวัติการส่งล่าสุด</div>
+      <!-- รายการแทนตาราง ด้วยเหตุผลเดียวกับการ์ด "การส่งข้อความล่าสุด" ในหน้าภาพรวม -->
+      <div class="px-5 py-1">
+        <% if (logs.length === 0) { %>
+          <p class="text-center text-slate-400 py-6 text-sm">ยังไม่มีประวัติ</p>
+        <% } %>
+        <% logs.forEach(function (l) { %>
+          <div class="log-row">
+            <div class="log-time"><%= formatDateTime(l.created_at) %></div>
+            <div class="log-main">
+              <div class="log-text" title="<%= l.preview %>"><%= l.preview %></div>
+              <div class="log-target"><%= l.target_name || l.target_id || l.target_type %></div>
+              <% if (l.error) { %><div class="text-[10px] text-red-500 mt-1"><%= l.error %></div><% } %>
+            </div>
+            <span class="badge shrink-0 <%= l.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : l.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600' %>"><%= l.status %></span>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleKind() {
+    const isFlex = document.querySelector('input[name=kind]:checked').value === 'flex'
+    document.getElementById('blockText').classList.toggle('hidden', isFlex)
+    document.getElementById('blockFlex').classList.toggle('hidden', !isFlex)
+  }
+  function toggleFlexMode() {
+    const raw = document.getElementById('flexMode').value === 'raw'
+    document.getElementById('blockRaw').classList.toggle('hidden', !raw)
+    document.getElementById('blockTemplate').classList.toggle('hidden', raw)
+  }
+  // เปลี่ยน dropdown กลุ่มเป็นช่องกรอกอิสระเมื่อเลือกส่งหาผู้ใช้รายบุคคล
+  document.getElementById('targetType').addEventListener('change', function (e) {
+    const wrap = document.getElementById('targetSelect')
+    if (e.target.value === 'group') return
+    const input = document.createElement('input')
+    input.name = 'targetId'
+    input.className = 'input'
+    input.placeholder = e.target.value === 'user' ? 'Uxxxxxxxx (userId)' : 'ไม่ต้องใส่สำหรับ broadcast'
+    if (e.target.value === 'broadcast') input.disabled = true
+    wrap.replaceWith(input)
+  })
+</script>
+
+<%- include('partials/foot') %>

@@ -1,0 +1,80 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+
+<div class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+  การเก็บบทสนทนากลุ่ม<strong>ต้องแจ้งและได้รับความยินยอมจากสมาชิกทุกคนก่อนเสมอ (PDPA)</strong>
+  ระบบบันทึกวันเวลาที่ยืนยันไว้ให้ตรวจสอบย้อนหลังได้
+  <span class="text-[11px] block mt-1 text-amber-800/80">
+    กลุ่มที่ยังไม่ติ๊ก "แจ้งสมาชิกแล้ว" จะขึ้นป้ายเหลืองไว้เตือน - ควรแจ้งให้เรียบร้อยก่อนนำข้อมูลไปใช้งานต่อ
+  </span>
+</div>
+
+<div class="card p-5">
+  <div class="card-title mb-1">เพิ่มกลุ่มด้วยตนเอง</div>
+  <p class="text-xs text-slate-500 mb-3">
+    ปกติกลุ่มจะถูกเพิ่มอัตโนมัติเมื่อบอทถูกเชิญเข้ากลุ่ม ช่องนี้ใช้กรณีที่รู้ groupId อยู่แล้ว (ขึ้นต้นด้วยตัว C)
+  </p>
+  <form method="post" action="/groups" class="grid md:grid-cols-3 gap-3 items-end">
+    <div>
+      <label class="label">groupId</label>
+      <input name="groupId" class="input" placeholder="Cxxxxxxxxxxxxxxxx" required>
+    </div>
+    <div>
+      <label class="label">ชื่อกลุ่ม (ตั้งเองได้)</label>
+      <input name="groupName" class="input" placeholder="กลุ่มผู้บริหาร">
+    </div>
+    <div><button class="btn btn-dark">เพิ่มกลุ่ม</button></div>
+  </form>
+</div>
+
+<% if (groups.length === 0) { %>
+  <div class="card p-8 text-center text-slate-500 text-sm">
+    ยังไม่มีกลุ่มในระบบ - เชิญบอทเข้าไลน์กลุ่ม หรือรัน <code class="bg-slate-100 px-1 rounded">npm run seed:chat</code> เพื่อใส่กลุ่มจำลอง
+  </div>
+<% } %>
+
+<% groups.forEach(function (g) { %>
+  <div class="card p-5">
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div>
+        <div class="font-semibold"><%= g.group_name || '(ยังไม่ตั้งชื่อ)' %></div>
+        <div class="text-xs text-slate-400 font-mono mt-0.5"><%= g.group_id %></div>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span class="badge <%= g.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600' %>">
+          <%= g.is_active ? 'active' : 'บอทออกจากกลุ่มแล้ว' %>
+        </span>
+        <span class="badge <%= g.consent_at ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700' %>">
+          <%= g.consent_at ? 'ยืนยันความยินยอมแล้ว' : 'ยังไม่ยืนยันความยินยอม' %>
+        </span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+      <div><div class="text-xs text-slate-500">ข้อความที่เก็บได้</div><div class="font-semibold"><%= formatNumber(g.message_count) %></div></div>
+      <div><div class="text-xs text-slate-500">จำนวนสมาชิก</div><div class="font-semibold"><%= g.member_count || '-' %></div></div>
+      <div><div class="text-xs text-slate-500">บอทเข้ากลุ่มเมื่อ</div><div class="font-semibold"><%= formatDate(g.joined_at) %></div></div>
+      <div><div class="text-xs text-slate-500">ข้อความล่าสุด</div><div class="font-semibold"><%= formatDateTime(g.last_message_at) %></div></div>
+    </div>
+
+    <form method="post" action="/groups/<%= g.group_id %>" class="grid md:grid-cols-4 gap-3 items-end mt-4 pt-4 border-t border-slate-100">
+      <div>
+        <label class="label">ชื่อกลุ่ม</label>
+        <input name="groupName" value="<%= g.group_name || '' %>" class="input">
+      </div>
+      <div class="md:col-span-2">
+        <label class="label">หมายเหตุ</label>
+        <input name="note" value="<%= g.note || '' %>" class="input" placeholder="เช่น กลุ่มทีมปฏิบัติการ ใช้สรุปงานทุกเย็น">
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="consent" <%= g.consent_at ? 'checked' : '' %> class="rounded">
+          แจ้งสมาชิกแล้ว
+        </label>
+        <button class="btn btn-dark">บันทึก</button>
+      </div>
+    </form>
+  </div>
+<% }) %>
+
+<%- include('partials/foot') %>
