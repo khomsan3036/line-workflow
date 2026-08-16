@@ -1,13 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { config } from '../config'
 import { query } from '../db'
 import type { MessageRow } from './messages'
 
 // ---------------------------------------------------------------------------
 // สรุปบทสนทนากลุ่ม
-//   - ถ้าตั้ง ANTHROPIC_API_KEY ไว้ จะเรียก Claude API ให้สรุปและสกัดงาน
-//   - ถ้าไม่ได้ตั้ง จะใช้ตัวสรุปแบบ rule-based ในเครื่อง (ทำงานได้ทันทีแบบออฟไลน์)
-// จุดสอน: ระบบที่ดีควรมี fallback ไม่ล้มทั้งระบบเพราะขาด API key
+//   - ถ้าตั้ง OPENAI_API_KEY ไว้ จะเรียก OpenAI ให้สรุปและสกัดงาน (ตัวหลัก)
+//   - ถ้าไม่ได้ตั้ง แต่มี ANTHROPIC_API_KEY จะใช้ Claude API แทน
+//   - ถ้าไม่มีเลย (หรือเรียกไม่สำเร็จ) จะใช้ตัวสรุปแบบ rule-based ในเครื่อง
+//     ซึ่งทำงานได้ทันทีแบบออฟไลน์
+// จุดสอน: ระบบที่ดีควรมี fallback ไม่ล้มทั้งระบบเพราะขาด API key หรือเครดิตหมด
 // ---------------------------------------------------------------------------
 
 export interface ExtractedTask {
@@ -67,14 +70,51 @@ export async function summarizeMessages(messages: MessageRow[]): Promise<Summary
     }
   }
 
-  if (config.anthropic.apiKey) {
+  if (config.openai.apiKey) {
+    try {
+      return await summarizeWithOpenAI(textMessages)
+    } catch (err) {
+      console.error('[AI] เรียก OpenAI API ไม่สำเร็จ ใช้ตัวสรุปในเครื่องแทน:', describeAiError(err))
+    }
+  } else if (config.anthropic.apiKey) {
     try {
       return await summarizeWithClaude(textMessages)
     } catch (err) {
-      console.error('[AI] เรียก Claude API ไม่สำเร็จ ใช้ตัวสรุปในเครื่องแทน:', err instanceof Error ? err.message : err)
+      console.error('[AI] เรียก Claude API ไม่สำเร็จ ใช้ตัวสรุปในเครื่องแทน:', describeAiError(err))
     }
   }
   return summarizeLocally(textMessages)
+}
+
+/** ดึงข้อความ error ที่อ่านรู้เรื่องออกมา และเติมคำแนะนำสำหรับกรณีที่เจอบ่อย */
+function describeAiError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (/insufficient_quota|credit balance is too low|quota/i.test(message)) {
+    return `${message}\n      -> เครดิต/โควตาของผู้ให้บริการหมด ให้เติมเงินหรือสลับไปใช้ผู้ให้บริการอื่นใน .env`
+  }
+  if (/invalid[_ ]api[_ ]key|401|Incorrect API key/i.test(message)) {
+    return `${message}\n      -> API key ไม่ถูกต้อง ตรวจค่า OPENAI_API_KEY / ANTHROPIC_API_KEY ใน .env`
+  }
+  return message
+}
+
+async function summarizeWithOpenAI(messages: MessageRow[]): Promise<SummaryResult> {
+  const client = new OpenAI({ apiKey: config.openai.apiKey })
+  const transcript = buildTranscript(messages)
+
+  const response = await client.chat.completions.create({
+    model: config.openai.model,
+    max_completion_tokens: 2000,
+    // บังคับให้ตอบเป็น JSON ที่ parse ได้เสมอ (SYSTEM_PROMPT มีคำว่า JSON อยู่แล้วตามที่ API กำหนด)
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: `บทสนทนาในไลน์กลุ่ม:\n\n${transcript}` }
+    ]
+  })
+
+  const raw = response.choices[0]?.message?.content ?? ''
+  return parseSummaryJson(raw, config.openai.model, messages.length)
 }
 
 async function summarizeWithClaude(messages: MessageRow[]): Promise<SummaryResult> {
@@ -92,10 +132,14 @@ async function summarizeWithClaude(messages: MessageRow[]): Promise<SummaryResul
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('')
-    .trim()
 
+  return parseSummaryJson(raw, config.anthropic.model, messages.length)
+}
+
+/** แปลงคำตอบ JSON จากโมเดลให้เป็น SummaryResult (ใช้ร่วมกันทุกผู้ให้บริการ) */
+function parseSummaryJson(raw: string, model: string, messageCount: number): SummaryResult {
   // เผื่อโมเดลใส่ code fence มาให้ ตัดออกก่อน parse
-  const cleaned = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
   const parsed = JSON.parse(cleaned) as {
     summary?: string
     topics?: string[]
@@ -106,8 +150,8 @@ async function summarizeWithClaude(messages: MessageRow[]): Promise<SummaryResul
     summaryText: parsed.summary ?? '',
     topics: Array.isArray(parsed.topics) ? parsed.topics.slice(0, 5) : [],
     tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
-    model: config.anthropic.model,
-    messageCount: messages.length
+    model,
+    messageCount
   }
 }
 

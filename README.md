@@ -54,7 +54,8 @@ npm run dev
 | `DEFAULT_GROUP_ID` | groupId ปลายทางเริ่มต้นของสคริปต์ตั้งเวลา |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | บัญชีเข้า dashboard |
 | `ADMIN_PASSWORD_HASH` | ถ้าใส่ค่านี้ ระบบจะใช้ hash แทนรหัสผ่านธรรมดา |
-| `ANTHROPIC_API_KEY` | ใส่แล้วการสรุปจะใช้ Claude API ถ้าไม่ใส่จะใช้ rule-based ในเครื่อง |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | ใส่แล้วการสรุปจะใช้ OpenAI (ค่าเริ่มต้น `gpt-4o`) |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | ทางเลือกแทน OpenAI ใช้เมื่อไม่ได้ใส่ `OPENAI_API_KEY` |
 | `ANOMALY_AMOUNT_THRESHOLD` | เกณฑ์ยอดต่อบิลที่ถือว่าผิดปกติ (ค่าเริ่มต้น 300000) |
 | `MEDIA_ARCHIVE_ENABLED` | เปิด/ปิดการเก็บภาพและไฟล์จากไลน์กลุ่ม |
 | `MEDIA_STORAGE_DRIVER` | `local` (ดิสก์) หรือ `s3` (object storage) |
@@ -112,7 +113,7 @@ DATABASE_URL="postgres://...-pooler.../linechat?sslmode=require" npm run db:setu
 
 # 3) push ขึ้น GitHub แล้วสร้าง Blueprint ใน Render (แผน Starter)
 # 4) กรอก env ใน Render: DATABASE_URL, CHANNEL_ACCESS_TOKEN, CHANNEL_SECRET,
-#    DEFAULT_GROUP_ID, ADMIN_PASSWORD_HASH, ANTHROPIC_API_KEY
+#    DEFAULT_GROUP_ID, ADMIN_PASSWORD_HASH, OPENAI_API_KEY
 # 5) ตั้ง Webhook URL ใน LINE เป็น https://<ชื่อ>.onrender.com/webhook
 ```
 

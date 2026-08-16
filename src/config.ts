@@ -60,6 +60,10 @@ export const config = {
     apiKey: process.env.ANTHROPIC_API_KEY ?? '',
     model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5'
   },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY ?? '',
+    model: process.env.OPENAI_MODEL ?? 'gpt-4o'
+  },
 
   anomalyAmountThreshold: Number(process.env.ANOMALY_AMOUNT_THRESHOLD ?? 300000),
 
@@ -120,6 +124,16 @@ export function reportScheduleNote(): string | null {
   return `ส่งอัตโนมัติ${hour < 12 ? 'ทุกเช้า' : 'ทุกวัน'} ${label}`
 }
 
+/**
+ * บอกว่าการสรุปแชทจะใช้อะไร โดยเรียงตามลำดับเดียวกับใน src/services/summary.ts
+ * (OpenAI ก่อน แล้วค่อย Claude สุดท้ายคือ rule-based ในเครื่อง)
+ */
+export function aiProviderLabel(): string {
+  if (config.openai.apiKey) return `OpenAI (${config.openai.model})`
+  if (config.anthropic.apiKey) return `Claude (${config.anthropic.model})`
+  return 'rule-based ในเครื่อง (ไม่ได้ใส่ OPENAI_API_KEY หรือ ANTHROPIC_API_KEY)'
+}
+
 export function describeConfig(): string {
   const lines = [
     `สภาพแวดล้อม   : ${config.nodeEnv}`,
@@ -127,7 +141,7 @@ export function describeConfig(): string {
     `โหมด LINE      : ${config.mockLine ? 'MOCK (ไม่ยิง API จริง)' : 'LIVE (ส่งเข้า LINE จริง)'}`,
     `Channel secret : ${config.channelSecret ? 'ตั้งค่าแล้ว (ตรวจ signature)' : 'ยังไม่ตั้ง (webhook จะข้ามการตรวจ signature)'}`,
     `Session        : ${config.sessionInDatabase ? 'เก็บใน PostgreSQL' : 'เก็บใน memory (หายเมื่อ restart)'}`,
-    `AI สรุปแชท     : ${config.anthropic.apiKey ? config.anthropic.model : 'rule-based ในเครื่อง (ไม่ได้ใส่ ANTHROPIC_API_KEY)'}`,
+    `AI สรุปแชท     : ${aiProviderLabel()}`,
     `เก็บไฟล์สื่อ    : ${
       config.media.enabled
         ? `เปิด (${config.media.driver === 'local' ? `ดิสก์ ${config.media.localDir}` : 's3'}, สูงสุด ${config.media.maxSizeMb} MB/ไฟล์)`
