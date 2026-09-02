@@ -1,5 +1,6 @@
 import { pool, query } from '../db'
 import { deleteMediaByMessageId } from './media'
+import { unsendDirectMessage } from './directMessages'
 
 // ---------------------------------------------------------------------------
 // จัดการเมื่อผู้ใช้กด "ยกเลิกส่ง" (unsend)
@@ -37,7 +38,10 @@ export async function handleUnsend(lineMessageId: string): Promise<UnsendResult>
   // 3) ลบงานที่ AI สกัดมาจากข้อความนั้น (ถ้ามี) จะได้ไม่เหลือเนื้อหาที่ถูกยกเลิก
   await query(`DELETE FROM group_tasks WHERE source_msg = $1`, [lineMessageId])
 
-  const messageRemoved = (res.rowCount ?? 0) > 0
+  // 4) ถ้าเป็นข้อความแชท 1:1 อยู่ในตาราง direct_messages
+  const directRemoved = await unsendDirectMessage(lineMessageId)
+
+  const messageRemoved = (res.rowCount ?? 0) > 0 || directRemoved
   console.log(
     `[ยกเลิกส่ง] ${lineMessageId} - ข้อความ ${messageRemoved ? 'ลบแล้ว' : 'ไม่พบ'}, ไฟล์ ${mediaRemoved ? 'ลบแล้ว' : 'ไม่มี'}`
   )

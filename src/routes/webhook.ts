@@ -3,11 +3,15 @@ import { asyncRouter } from '../middleware/asyncRouter'
 import { middleware, type WebhookEvent } from '@line/bot-sdk'
 import { config } from '../config'
 import { pool } from '../db'
-import { getGroupMemberCount, getGroupMemberName, replyText } from '../line/client'
+import { getGroupMemberCount, getGroupMemberName, getUserProfileName } from '../line/client'
+import { replyAndLog } from '../services/messaging'
+import { saveDirectMessage } from '../services/directMessages'
+import { handleAttendanceQuestion } from '../services/attendanceHandler'
+import { handleMyAttendance } from '../services/myAttendanceHandler'
 import { upsertGroup } from '../services/groups'
 import { archiveMedia } from '../services/media'
 import { handleUnsend } from '../services/unsend'
-import { FALLBACK_TEXT, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
+import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
 
 // ---------------------------------------------------------------------------
 // ขาเข้า: รับ event จาก LINE Platform แล้วบันทึกข้อความในกลุ่มลง PostgreSQL
@@ -54,15 +58,18 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     const groupId = event.source.groupId
     const memberCount = await getGroupMemberCount(groupId)
     await upsertGroup(groupId, { memberCount, isActive: true })
-    await replyText(
-      event.replyToken,
-      [
+    await replyAndLog({
+      replyToken: event.replyToken,
+      targetType: 'group',
+      targetId: groupId,
+      text: [
         'สวัสดีครับ ผมคือบอทบันทึกบทสนทนาของทีม',
         'ผมจะเริ่มบันทึกข้อความในกลุ่มนี้ตั้งแต่ตอนนี้เป็นต้นไป เพื่อใช้สรุปประชุมและติดตามงาน',
         'ข้อความก่อนหน้านี้ผมมองไม่เห็นนะครับ',
         'ถ้าไม่สะดวกให้บันทึก แจ้งผู้ดูแลเพื่อเชิญผมออกจากกลุ่มได้เลยครับ'
-      ].join('\n')
-    )
+      ].join('\n'),
+      sentBy: 'auto-reply:join'
+    })
     console.log(`[Join] บอทเข้าร่วมกลุ่ม ${groupId}`)
     return
   }
@@ -84,7 +91,13 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // 4) มีคนกดเพิ่มเพื่อนกับ Official Account -> ทักทายและชี้ไปที่ Rich Menu
   if (event.type === 'follow') {
-    await replyText(event.replyToken, WELCOME_TEXT)
+    await replyAndLog({
+      replyToken: event.replyToken,
+      targetId: event.source.userId,
+      text: WELCOME_TEXT,
+      quickReply: SHORTCUT_QUICK_REPLY,
+      sentBy: 'auto-reply:follow'
+    })
     console.log('[Follow] มีผู้ใช้เพิ่มเพื่อนกับ OA')
     return
   }
@@ -92,7 +105,13 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
   // 5) ผู้ใช้กดปุ่ม Rich Menu ที่เป็น action ชนิด postback
   if (event.type === 'postback') {
     const reply = replyForPostback(event.postback.data)
-    await replyText(event.replyToken, reply ?? FALLBACK_TEXT)
+    await replyAndLog({
+      replyToken: event.replyToken,
+      targetId: event.source.userId,
+      text: reply ?? FALLBACK_TEXT,
+      quickReply: SHORTCUT_QUICK_REPLY,
+      sentBy: reply ? 'auto-reply:postback' : 'auto-reply:fallback'
+    })
     console.log(`[Postback] data=${event.postback.data}${reply ? '' : ' (ไม่ตรงเมนูใด)'}`)
     return
   }
@@ -102,15 +121,61 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // ---------------------------------------------------------------------
   // แชท 1:1 กับ OA: ตอบกลับตามเมนู (Rich Menu ชนิด message ส่งข้อความเข้ามาทางนี้)
-  //
-  // ตั้งใจ "ไม่บันทึก" ข้อความแชทส่วนตัวลงฐานข้อมูล เพราะระบบนี้ออกแบบมา
-  // เพื่อเก็บบทสนทนาของกลุ่มที่แจ้งความยินยอมไว้แล้วเท่านั้น (PDPA)
+  // แล้วบันทึกลงตาราง direct_messages (แยกจากข้อความกลุ่มใน line_messages)
   // ---------------------------------------------------------------------
   if (event.source.type === 'user') {
-    if (event.message.type !== 'text') return
-    const reply = replyForText(event.message.text)
-    await replyText(event.replyToken, reply ?? FALLBACK_TEXT)
-    console.log(`[แชท 1:1] "${event.message.text}"${reply ? ' -> ตอบตามเมนู' : ' -> ตอบ fallback'}`)
+    const userId = event.source.userId
+    const text = event.message.type === 'text' ? event.message.text : null
+
+    // ลำดับการตอบ: เวลาเข้างานของฉัน -> สรุปพนักงานทั้งหมด -> เมนู -> fallback
+    let replyText: string | null = null
+    let matched: boolean | null = null
+
+    if (text !== null) {
+      const mine = await handleMyAttendance({ text, replyToken: event.replyToken, userId })
+      const attendance = mine
+        ? null
+        : await handleAttendanceQuestion({
+            text,
+            replyToken: event.replyToken,
+            targetType: 'user',
+            targetId: userId
+          })
+
+      if (mine) {
+        replyText = mine.summaryText
+        matched = true
+        console.log(`[แชท 1:1] "${text}" -> ตอบเวลาเข้างานของฉัน`)
+      } else if (attendance) {
+        replyText = attendance.summaryText
+        matched = true
+        console.log(`[แชท 1:1] "${text}" -> ตอบสรุปเข้างาน`)
+      } else {
+        const reply = replyForText(text)
+        replyText = reply ?? FALLBACK_TEXT
+        matched = reply !== null
+        await replyAndLog({
+          replyToken: event.replyToken,
+          targetId: userId,
+          text: replyText,
+          quickReply: SHORTCUT_QUICK_REPLY,
+          sentBy: reply ? 'auto-reply:menu' : 'auto-reply:fallback'
+        })
+        console.log(`[แชท 1:1] "${text}"${reply ? ' -> ตอบตามเมนู' : ' -> ตอบ fallback'}`)
+      }
+    }
+
+    const displayName = await getUserProfileName(userId)
+    await saveDirectMessage({
+      lineMessageId: event.message.id,
+      userId,
+      displayName,
+      messageType: event.message.type,
+      messageText: text,
+      replyText,
+      replyMatched: matched,
+      sentAt: new Date(event.timestamp)
+    })
     return
   }
 
@@ -136,6 +201,17 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     messageText,
     sentAt
   })
+
+  // ในกลุ่มก็ถามสรุปเข้างานได้ (ตอบเฉพาะเมื่อข้อความเป็นคำถามเรื่องนี้ ไม่รบกวนแชทปกติ)
+  if (messageText !== null) {
+    const attendance = await handleAttendanceQuestion({
+      text: messageText,
+      replyToken: event.replyToken,
+      targetType: 'group',
+      targetId: groupId
+    })
+    if (attendance) console.log(`[กลุ่ม] "${messageText}" -> ตอบสรุปเข้างาน`)
+  }
 
   // ---------------------------------------------------------------------
   // ถ้าเป็นรูป วิดีโอ เสียง หรือไฟล์ ให้ดาวน์โหลดมาเก็บถาวรทันที

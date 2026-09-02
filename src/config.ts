@@ -37,6 +37,16 @@ export const config = {
   // จำนวน connection สูงสุดใน pool (ปรับลงได้ถ้าฐานข้อมูลจำกัด connection)
   poolMax: Number(process.env.PG_POOL_MAX ?? 10),
 
+  // ฐานข้อมูล HR (SQL Server) ที่ระบบสแกนนิ้วเขียนตาราง AttendanceDaily ไว้
+  // รูปแบบ: Server=host\instance;Database=...;User Id=...;Password=...;TrustServerCertificate=True;
+  // ปล่อยว่างได้ บอทจะตอบว่ายังไม่ได้เชื่อมต่อเมื่อมีคนถามสรุปพนักงาน
+  mssqlConnectionString: process.env.DATABASE_URL_MSSQL ?? '',
+
+  // API ของระบบ HR (qtecintegra) สำหรับดูเวลาเข้า-ออกรายบุคคล (time attendance ของฉัน)
+  manpowerApiUrl:
+    process.env.MANPOWER_API_URL ?? 'https://qtecintegra.com/api/hr/api/v1/Manpower/GetManpowerByDate',
+  manpowerApiTimeoutMs: Number(process.env.MANPOWER_API_TIMEOUT_MS ?? 15000),
+
   channelAccessToken,
   channelSecret,
   mockLine,

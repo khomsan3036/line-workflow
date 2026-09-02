@@ -91,6 +91,18 @@ export async function getGroupMemberName(groupId: string, userId: string): Promi
   }
 }
 
+/** ชื่อโปรไฟล์ของผู้ใช้ที่แชท 1:1 กับ OA (ต้องเป็นเพื่อนกับ OA อยู่) */
+export async function getUserProfileName(userId: string): Promise<string | null> {
+  if (config.mockLine || !lineClient) return null
+  try {
+    const profile = await lineClient.getProfile(userId)
+    return profile.displayName ?? null
+  } catch (err) {
+    console.error('[Profile] ดึงชื่อผู้ใช้ไม่สำเร็จ:', extractLineError(err))
+    return null
+  }
+}
+
 /** จำนวนสมาชิกในกลุ่ม */
 export async function getGroupMemberCount(groupId: string): Promise<number | null> {
   if (config.mockLine || !lineClient) return null
@@ -103,10 +115,30 @@ export async function getGroupMemberCount(groupId: string): Promise<number | nul
 }
 
 /** ตอบกลับข้อความด้วย replyToken (ใช้ได้ครั้งเดียวและหมดอายุเร็ว) */
-export async function replyText(replyToken: string, text: string): Promise<SendOutcome> {
+export async function replyText(replyToken: string, text: string, quickReply?: unknown): Promise<SendOutcome> {
   if (config.mockLine || !lineClient) return mockLog('replyText', text)
   try {
-    await lineClient.replyMessage({ replyToken, messages: [{ type: 'text', text }] })
+    const message: Record<string, unknown> = { type: 'text', text }
+    if (quickReply) message.quickReply = quickReply
+    await lineClient.replyMessage({ replyToken, messages: [message as never] })
+    return { status: 'sent' }
+  } catch (err) {
+    return { status: 'failed', error: extractLineError(err) }
+  }
+}
+
+/** ตอบกลับด้วย Flex Message (แนบ quick reply ใต้ช่องพิมพ์ได้) */
+export async function replyFlex(
+  replyToken: string,
+  altText: string,
+  contents: unknown,
+  quickReply?: unknown
+): Promise<SendOutcome> {
+  if (config.mockLine || !lineClient) return mockLog('replyFlex', altText)
+  try {
+    const message: Record<string, unknown> = { type: 'flex', altText, contents }
+    if (quickReply) message.quickReply = quickReply
+    await lineClient.replyMessage({ replyToken, messages: [message as never] })
     return { status: 'sent' }
   } catch (err) {
     return { status: 'failed', error: extractLineError(err) }

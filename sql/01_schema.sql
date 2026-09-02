@@ -225,3 +225,41 @@ FROM media_files m
 LEFT JOIN line_groups g ON g.group_id = m.group_id
 WHERE m.status = 'stored'
 ORDER BY m.sent_at DESC;
+
+-- --------------------------------------------------------------------------
+-- 10) direct_messages : ข้อความที่ผู้ใช้ส่งหาบอทแบบ 1:1 (แชทส่วนตัวกับ OA)
+--     แยกจาก line_messages เพื่อให้รายงานและสรุปประชุมของกลุ่มไม่ปนกับแชทส่วนตัว
+--     ข้อควรระวัง PDPA: ผู้ใช้ 1:1 ไม่ได้รับข้อความขอความยินยอมแบบสมาชิกกลุ่ม
+--     ควรแจ้งไว้ในข้อความต้อนรับ (follow) ว่าระบบบันทึกบทสนทนา
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS direct_messages (
+    id              SERIAL PRIMARY KEY,
+    line_message_id VARCHAR(64) UNIQUE,        -- กัน insert ซ้ำเมื่อ LINE retry webhook
+    user_id         VARCHAR(64) NOT NULL,      -- ID ของผู้ส่ง (ขึ้นต้นด้วย U)
+    display_name    VARCHAR(255),              -- ชื่อโปรไฟล์ ณ เวลาที่ส่ง
+    message_type    VARCHAR(20) NOT NULL,      -- text / sticker / image / video / file ...
+    message_text    TEXT,                      -- เนื้อความ (เฉพาะ message_type = 'text')
+    reply_text      TEXT,                      -- ข้อความที่บอทตอบกลับอัตโนมัติ
+    reply_matched   BOOLEAN,                   -- true = ตรงเมนู, false = ตอบ fallback
+    sent_at         TIMESTAMPTZ NOT NULL,      -- เวลาส่งจริงจาก LINE (event.timestamp)
+    unsent_at       TIMESTAMPTZ,               -- เวลาที่ผู้ใช้กดยกเลิกส่ง (ถ้ามี)
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_user_time ON direct_messages (user_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dm_sent_at   ON direct_messages (sent_at DESC);
+
+-- --------------------------------------------------------------------------
+-- 11) line_employee_links : ผูก LINE userId กับรหัสพนักงาน (prs_no) ในระบบ HR
+--     ผู้ใช้พิมพ์รหัสครั้งเดียว บอทจะจำไว้ให้ถาม "เวลาเข้างานของฉัน" ได้ทันที
+--     ผู้ใช้พิมพ์รหัสใหม่เพื่อเปลี่ยน หรือ "ยกเลิกรหัสพนักงาน" เพื่อลบ
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS line_employee_links (
+    line_user_id VARCHAR(64)  PRIMARY KEY,
+    prs_no       VARCHAR(32)  NOT NULL,
+    full_name    VARCHAR(255),
+    position     VARCHAR(255),
+    dept         VARCHAR(255),
+    linked_at    TIMESTAMPTZ  DEFAULT now(),
+    updated_at   TIMESTAMPTZ  DEFAULT now()
+);

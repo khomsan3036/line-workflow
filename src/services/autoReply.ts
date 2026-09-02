@@ -74,6 +74,18 @@ export const MENU_REPLIES: MenuReply[] = [
     keywords: ['เบอร์ติดต่อภายใน', 'เบอร์ภายใน', 'เบอร์ติดต่อ'],
     reply: () =>
       ['เบอร์ติดต่อภายใน', ...INTERNAL_CONTACTS.map(([name, ext]) => `- ${name} ต่อ ${ext}`)].join('\n')
+  },
+  {
+    key: 'hr-contact',
+    keywords: ['ติดต่อฝ่ายบุคคล', 'ติดต่อ hr', 'ติดต่อ HR'],
+    reply: () =>
+      [
+        'ติดต่อฝ่ายบุคคล (HR)',
+        '- โทรภายใน ต่อ 101',
+        '- เวลาทำการ จันทร์-ศุกร์ 08:30-17:30 น.',
+        '',
+        'พิมพ์เรื่องที่ต้องการติดต่อไว้ได้เลยครับ เจ้าหน้าที่จะตอบกลับในเวลาทำการ'
+      ].join('\n')
   }
 ]
 
@@ -84,8 +96,19 @@ export const WELCOME_TEXT = 'สวัสดีครับ เลือกบ�
 export const FALLBACK_TEXT = [
   'ขออภัยครับ ผมยังไม่เข้าใจข้อความนี้',
   'เลือกบริการจากเมนูด้านล่าง หรือพิมพ์คำเหล่านี้ได้ครับ',
-  ...MENU_REPLIES.map((m) => `- ${m.keywords[0]}`)
+  ...MENU_REPLIES.map((m) => `- ${m.keywords[0]}`),
+  '- สรุปพนักงานเข้างาน วันนี้ / เมื่อวาน / อาทิตย์นี้ (ระบุ workshop หรือ site ได้)',
+  '- เวลาเข้างานของฉัน วันนี้ / อาทิตย์นี้ / เดือนนี้ (ครั้งแรกพิมพ์รหัสพนักงาน เช่น S69-1-003)'
 ].join('\n')
+
+/** ปุ่มลัดใต้ช่องพิมพ์ แนบไปกับข้อความตอบกลับธรรมดา ให้เข้าถึงฟีเจอร์เวลาเข้างานได้ในแตะเดียว */
+export const SHORTCUT_QUICK_REPLY = {
+  items: [
+    { type: 'action', action: { type: 'message', label: 'เวลาเข้างานของฉัน', text: 'เวลาเข้างานของฉัน วันนี้' } },
+    { type: 'action', action: { type: 'message', label: 'สรุปพนักงาน วันนี้', text: 'สรุปพนักงาน วันนี้' } },
+    { type: 'action', action: { type: 'message', label: 'สรุปพนักงาน เมื่อวาน', text: 'สรุปพนักงาน เมื่อวาน' } }
+  ]
+}
 
 function normalize(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, ' ')
