@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { config, reportScheduleNote } from '../config'
+import { config } from '../config'
 import { flexExecutiveReport } from '../services/flex'
 import { sendAndLog } from '../services/messaging'
 import {
@@ -99,8 +99,7 @@ export async function runDailyReport(options: DailyReportOptions = {}): Promise<
       changePct: sales.changePct,
       branches: sales.branches,
       channels: sales.channels,
-      anomalies,
-      footerNote: reportScheduleNote() ? `รายงานอัตโนมัติ · ${reportScheduleNote()}` : undefined
+      anomalies
     }),
     sentBy: options.sentBy ?? 'job:daily-report',
     dryRun

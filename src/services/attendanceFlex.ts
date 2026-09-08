@@ -25,9 +25,15 @@ const BLUE = '#3B82F6'
 const AMBER = '#F59E0B'
 const INK = '#111827'
 const MUTED = '#6B7280'
-const FAINT = '#9CA3AF'
 const TRACK = '#E5E7EB'
 const CARD = '#F8FAFC'
+// ตัวอักษรสีเข้มสำหรับพื้นขาว (เขียวสด #06C755 ใช้กับแถบ/จุดสีเท่านั้น เพราะตัวอักษรสีนี้อ่านยากบนมือถือ)
+const GREEN_INK = '#047857'
+// ป้ายบนหัวการ์ด: พื้นอ่อน + ตัวอักษรเข้ม (ตัวขาวบนเขียว/ฟ้าสดอ่านไม่ชัด)
+const CHIP_TONES: Record<string, { bg: string; fg: string }> = {
+  Workshop: { bg: '#ECFDF5', fg: GREEN_INK },
+  Site: { bg: '#EFF6FF', fg: '#1D4ED8' }
+}
 
 const LOCATION_COLORS: Record<string, string> = {
   Workshop: GREEN,
@@ -76,18 +82,18 @@ function queryText(period: string, location: LocationFilter): string {
 // ชิ้นส่วนย่อย
 // ---------------------------------------------------------------------------
 
-function chip(text: string, color: string) {
+function chip(text: string, tone: { bg: string; fg: string }) {
   return {
     type: 'box',
-    layout: 'baseline',
-    backgroundColor: color,
+    layout: 'vertical',
+    backgroundColor: tone.bg,
     cornerRadius: '999px',
-    paddingStart: '10px',
-    paddingEnd: '10px',
-    paddingTop: '3px',
-    paddingBottom: '3px',
+    paddingStart: '12px',
+    paddingEnd: '12px',
+    paddingTop: '4px',
+    paddingBottom: '4px',
     flex: 0,
-    contents: [{ type: 'text', text, size: 'xxs', color: '#FFFFFF', weight: 'bold' }]
+    contents: [{ type: 'text', text, size: 'xs', color: tone.fg, weight: 'bold', wrap: true }]
   }
 }
 
@@ -114,7 +120,7 @@ function bar(percent: number, color: string) {
 }
 
 function sectionTitle(text: string) {
-  return { type: 'text', text, size: 'xs', color: FAINT, weight: 'bold', margin: 'lg' }
+  return { type: 'text', text, size: 'xs', color: MUTED, weight: 'bold', margin: 'lg', wrap: true }
 }
 
 function statCell(label: string, value: string, valueColor = INK) {
@@ -123,8 +129,8 @@ function statCell(label: string, value: string, valueColor = INK) {
     layout: 'vertical',
     flex: 1,
     contents: [
-      { type: 'text', text: value, size: 'sm', weight: 'bold', color: valueColor, align: 'center' },
-      { type: 'text', text: label, size: 'xxs', color: MUTED, align: 'center', margin: 'xs' }
+      { type: 'text', text: value, size: 'sm', weight: 'bold', color: valueColor, align: 'center', wrap: true },
+      { type: 'text', text: label, size: 'xs', color: MUTED, align: 'center', margin: 'xs', wrap: true }
     ]
   }
 }
@@ -141,10 +147,12 @@ function header(summary: AttendanceSummary) {
       {
         type: 'box',
         layout: 'horizontal',
-        alignItems: 'center',
         contents: [
-          { type: 'text', text: 'สรุปการเข้างาน', size: 'xxs', color: '#94A3B8', weight: 'bold', flex: 1 },
-          chip(LOCATION_LABELS[query.location], query.location === 'all' ? NAVY_SOFT : locationColor(query.location))
+          { type: 'text', text: 'สรุปการเข้างาน', size: 'xs', color: '#CBD5E1', weight: 'bold', flex: 1, gravity: 'center', wrap: true },
+          chip(
+            LOCATION_LABELS[query.location],
+            query.location === 'all' ? { bg: NAVY_SOFT, fg: '#FFFFFF' } : CHIP_TONES[query.location]
+          )
         ]
       },
       { type: 'text', text: 'พนักงานสแกนเข้างาน', size: 'lg', weight: 'bold', color: '#FFFFFF', wrap: true },
@@ -177,7 +185,7 @@ function heroSingleDay(summary: AttendanceSummary) {
         contents: [
           statCell('สแกนแรก', summary.earliestIn ?? '-'),
           statCell('สแกนล่าสุด', summary.latestIn ?? '-'),
-          statCell('สแกนออกแล้ว', fmt(summary.totalCheckedOut), summary.totalCheckedOut > 0 ? GREEN : INK)
+          statCell('สแกนออกแล้ว', fmt(summary.totalCheckedOut), summary.totalCheckedOut > 0 ? GREEN_INK : INK)
         ]
       }
     ]
@@ -231,7 +239,6 @@ function locationRows(locations: LocationStat[], total: number) {
       {
         type: 'box',
         layout: 'horizontal',
-        alignItems: 'center',
         contents: [
           {
             type: 'box',
@@ -243,16 +250,17 @@ function locationRows(locations: LocationStat[], total: number) {
             flex: 0,
             contents: []
           },
-          { type: 'text', text: l.location, size: 'sm', color: INK, weight: 'bold', margin: 'sm', flex: 1 },
-          { type: 'text', text: `${fmt(l.people)} คน`, size: 'sm', color: INK, weight: 'bold', align: 'end', flex: 0 },
+          { type: 'text', text: l.location, size: 'sm', color: INK, weight: 'bold', margin: 'sm', flex: 1, gravity: 'center' },
+          { type: 'text', text: `${fmt(l.people)} คน`, size: 'sm', color: INK, weight: 'bold', align: 'end', flex: 0, gravity: 'center' },
           {
             type: 'text',
             text: `${pct(l.people, total)}%`,
             size: 'xs',
-            color: FAINT,
+            color: MUTED,
             align: 'end',
             flex: 0,
-            margin: 'sm'
+            margin: 'sm',
+            gravity: 'center'
           }
         ]
       },
@@ -260,9 +268,10 @@ function locationRows(locations: LocationStat[], total: number) {
       {
         type: 'text',
         text: `สแกนแรก ${l.earliestIn ?? '-'} · ล่าสุด ${l.latestIn ?? '-'} · ออกแล้ว ${fmt(l.checkedOut)}`,
-        size: 'xxs',
+        size: 'xs',
         color: MUTED,
-        margin: 'xs'
+        margin: 'xs',
+        wrap: true
       }
     ]
   }))
@@ -278,24 +287,25 @@ function dayRows(allDays: DayStat[], color: string, today: string) {
     return {
       type: 'box',
       layout: 'horizontal',
-      alignItems: 'center',
       margin: 'sm',
       contents: [
-        { type: 'text', text: label, size: 'xs', color: empty ? FAINT : INK, flex: 3 },
+        { type: 'text', text: label, size: 'xs', color: empty ? MUTED : INK, flex: 3, gravity: 'center' },
         {
           type: 'box',
           layout: 'vertical',
           flex: 6,
+          justifyContent: 'center',
           contents: [bar(empty ? 0 : pct(d.people, max), color)]
         },
         {
           type: 'text',
           text: empty ? 'ไม่มีข้อมูล' : fmt(d.people),
           size: 'xs',
-          color: empty ? FAINT : INK,
+          color: empty ? MUTED : INK,
           weight: empty ? 'regular' : 'bold',
           align: 'end',
-          flex: 3
+          flex: 3,
+          gravity: 'center'
         }
       ]
     }
@@ -374,9 +384,10 @@ export function flexAttendanceSummary(summary: AttendanceSummary, today: string)
   body.push({
     type: 'text',
     text: `ข้อมูล ณ ${nowTimeLocal()} น. · จากเครื่องสแกนนิ้ว`,
-    size: 'xxs',
-    color: FAINT,
-    margin: 'md'
+    size: 'xs',
+    color: MUTED,
+    margin: 'md',
+    wrap: true
   })
 
   return {
@@ -400,7 +411,7 @@ export function flexAttendanceEmpty(query: AttendanceQuery) {
       backgroundColor: NAVY,
       paddingAll: '18px',
       contents: [
-        { type: 'text', text: 'สรุปการเข้างาน', size: 'xxs', color: '#94A3B8', weight: 'bold' },
+        { type: 'text', text: 'สรุปการเข้างาน', size: 'xs', color: '#CBD5E1', weight: 'bold', wrap: true },
         { type: 'text', text: 'ยังไม่มีข้อมูลการสแกน', size: 'lg', weight: 'bold', color: '#FFFFFF', wrap: true },
         { type: 'text', text: `${query.period.label} · ${LOCATION_LABELS[query.location]}`, size: 'xs', color: '#CBD5E1', wrap: true }
       ]

@@ -2,7 +2,7 @@
 <%- include('partials/nav') %>
 
 <div class="grid lg:grid-cols-3 gap-4">
-  <form method="post" action="/tasks" class="card p-5 space-y-3">
+  <form method="post" action="<%= base %>/tasks" class="card p-5 space-y-3">
     <div class="card-title">เพิ่มงานด้วยตนเอง</div>
     <div>
       <label class="label">กลุ่ม</label>
@@ -35,7 +35,7 @@
     </div>
   </form>
 
-  <form id="remindForm" method="post" action="/tasks/remind" class="hidden">
+  <form id="remindForm" method="post" action="<%= base %>/tasks/remind" class="hidden">
     <input type="hidden" name="groupId" value="<%= selectedGroup %>">
   </form>
 
@@ -63,19 +63,19 @@
               <td>
                 <div class="flex gap-1">
                   <% if (t.status === 'open') { %>
-                    <form method="post" action="/tasks/<%= t.id %>/status">
+                    <form method="post" action="<%= base %>/tasks/<%= t.id %>/status">
                       <input type="hidden" name="status" value="done">
                       <input type="hidden" name="groupId" value="<%= selectedGroup %>">
                       <button class="btn btn-ghost text-xs">เสร็จแล้ว</button>
                     </form>
                   <% } else { %>
-                    <form method="post" action="/tasks/<%= t.id %>/status">
+                    <form method="post" action="<%= base %>/tasks/<%= t.id %>/status">
                       <input type="hidden" name="status" value="open">
                       <input type="hidden" name="groupId" value="<%= selectedGroup %>">
                       <button class="btn btn-ghost text-xs">กลับเป็นค้าง</button>
                     </form>
                   <% } %>
-                  <form method="post" action="/tasks/<%= t.id %>/delete" onsubmit="return confirm('ลบงานนี้?')">
+                  <form method="post" action="<%= base %>/tasks/<%= t.id %>/delete" onsubmit="return confirm('ลบงานนี้?')">
                     <input type="hidden" name="groupId" value="<%= selectedGroup %>">
                     <button class="btn btn-danger text-xs">ลบ</button>
                   </form>

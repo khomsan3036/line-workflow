@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type Router } from 'express'
 import { asyncRouter } from '../middleware/asyncRouter'
-import { config, reportScheduleNote } from '../config'
+import { config } from '../config'
 import { getQuota } from '../line/client'
 import { setFlash, takeFlash } from '../middleware/auth'
 import { flexAnnouncement, flexDailySummary, flexExecutiveReport, flexTaskReminder } from '../services/flex'
@@ -34,7 +34,7 @@ import {
 } from '../services/stats'
 import { listSummaries, saveSummary, summarizeMessages } from '../services/summary'
 import { addTask, addTasksSkipDuplicate, deleteTask, listTasks, setTaskStatus } from '../services/tasks'
-import { saveMessage } from './webhook'
+import { saveMessage } from '../services/groupMessages'
 
 // ---------------------------------------------------------------------------
 // Admin Dashboard - ทุกหน้าอยู่ใน router นี้ (ต้องผ่าน requireLogin มาแล้ว)
@@ -223,8 +223,12 @@ export function createAdminRouter(): Router {
       return
     }
 
-    const groups = res.locals.groups as { group_id: string; group_name: string | null }[]
-    const targetName = groups.find((g) => g.group_id === targetId)?.group_name ?? undefined
+    const groups = res.locals.groups as { group_id: string; group_name: string | null; channel: 'hr' | 'mt' }[]
+    const group = groups.find((g) => g.group_id === targetId)
+    const targetName = group?.group_name ?? undefined
+    // OA ที่ใช้ส่ง: ตามที่เลือกในฟอร์ม ถ้าเลือก "อัตโนมัติ" ใช้ OA ที่อยู่ในกลุ่มนั้น (ทะเบียนกลุ่ม) ไม่งั้น HR
+    const requested = body.channel === 'hr' || body.channel === 'mt' ? body.channel : null
+    const channel = requested ?? group?.channel ?? 'hr'
 
     const result = await sendAndLog({
       targetType,
@@ -235,7 +239,8 @@ export function createAdminRouter(): Router {
       altText,
       contents,
       sentBy: req.session.user ?? 'admin',
-      dryRun: action === 'dry'
+      dryRun: action === 'dry',
+      channel
     })
 
     if (result.status === 'failed') {
@@ -456,7 +461,8 @@ export function createAdminRouter(): Router {
       trend,
       date,
       hasData: latest !== null,
-      scheduleNote: reportScheduleNote(),
+      // REPORT_CRON ส่งการ์ดสรุปการเข้างานแล้ว รายงานยอดขาย (ข้อมูลจำลอง) ส่งได้จากหน้านี้และ CLI เท่านั้น
+      scheduleNote: null,
       reportCron: config.scheduler.reportCron
     })
   })
@@ -494,7 +500,7 @@ export function createAdminRouter(): Router {
         branches: sales.branches,
         channels: sales.channels,
         anomalies,
-        footerNote: reportScheduleNote() ? `รายงานอัตโนมัติ · ${reportScheduleNote()}` : undefined
+        footerNote: undefined
       }),
       sentBy: req.session.user ?? 'admin',
       dryRun: body.action === 'dry'

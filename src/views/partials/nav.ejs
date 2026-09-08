@@ -45,11 +45,11 @@
     %>
     <nav class="p-3 space-y-1 flex-1">
       <% menu.forEach(function (m) { %>
-        <a href="<%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
+        <a href="<%= base %><%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
       <% }) %>
       <div class="pt-3 mt-3 border-t border-white/10 text-[11px] text-slate-500 px-3 pb-1">เครื่องมือ</div>
       <% tools.forEach(function (m) { %>
-        <a href="<%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
+        <a href="<%= base %><%= m.href %>" class="nav-link <%= isOn(m.match) ? 'active' : '' %>"><%- svg(m.key) %><span><%= m.label %></span></a>
       <% }) %>
     </nav>
 
@@ -57,7 +57,7 @@
       <div class="px-2 pb-2 text-[11px] <%= mockLine ? 'text-amber-400' : 'text-line' %>">
         <%= mockLine ? 'โหมด MOCK: ไม่ยิง LINE API จริง' : 'โหมด LIVE: ส่งเข้า LINE จริง' %>
       </div>
-      <form method="post" action="/logout">
+      <form method="post" action="<%= base %>/logout">
         <button class="w-full text-left nav-link">ออกจากระบบ (<%= user %>)</button>
       </form>
     </div>
@@ -68,13 +68,13 @@
     <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-4 flex-wrap">
       <h1 class="text-lg font-semibold flex-1"><%= title %></h1>
       <% if (groups && groups.length > 0) { %>
-      <form method="get" action="<%= currentPath === '/' ? '/' : currentPath %>" class="flex items-center gap-2">
+      <form method="get" action="<%= base %><%= currentPath === '/' ? '/' : currentPath %>" class="flex items-center gap-2">
         <label class="text-xs text-slate-500">กลุ่ม</label>
         <select name="group" class="input w-64" onchange="this.form.submit()">
           <option value="">ทุกกลุ่ม</option>
           <% groups.forEach(function (g) { %>
             <option value="<%= g.group_id %>" <%= selectedGroup === g.group_id ? 'selected' : '' %>>
-              <%= g.group_name || g.group_id %>
+              <%= g.group_name || g.group_id %><%= maintenanceEnabled && g.channel === 'mt' ? ' (MT)' : '' %>
             </option>
           <% }) %>
         </select>

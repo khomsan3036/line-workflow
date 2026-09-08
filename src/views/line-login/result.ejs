@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <%- include('_head') %>
+</head>
+<body class="min-h-screen bg-scene flex items-center justify-center p-6">
+  <main class="w-full max-w-sm">
+    <header class="text-center mb-6">
+      <div class="logo-badge inline-flex items-center justify-center bg-white rounded-2xl px-7 py-4 mb-5">
+        <img src="<%= base %>/images/qtecLogo.png" alt="QTEC Qualitech" class="h-14 w-auto select-none" draggable="false">
+      </div>
+      <h1 class="text-white text-xl font-semibold tracking-tight">HR Notification</h1>
+    </header>
+
+    <section class="card bg-white rounded-2xl p-6 text-center">
+      <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full text-2xl <%= ok ? 'bg-emerald-50 text-[#06C755]' : 'bg-amber-50 text-amber-600' %>" aria-hidden="true">
+        <%= ok ? '✓' : '!' %>
+      </div>
+      <h2 class="text-slate-900 text-lg font-semibold"><%= title %></h2>
+      <p class="text-slate-600 text-sm mt-2 leading-relaxed"><%= message %></p>
+      <% if (typeof detail !== 'undefined' && detail) { %>
+        <p class="text-slate-400 text-xs mt-3 leading-relaxed"><%= detail %></p>
+      <% } %>
+
+      <% if (typeof employee !== 'undefined' && employee) { %>
+        <div class="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left">
+          <p class="text-[11px] uppercase tracking-wide text-slate-400 font-medium">รหัสพนักงานที่ผูกไว้</p>
+          <p class="text-slate-900 font-semibold text-lg mt-0.5"><%= employee.prsNo %></p>
+          <% if (employee.fullName) { %><p class="text-slate-700 text-sm"><%= employee.fullName %></p><% } %>
+          <% if (employee.position || employee.dept) { %>
+            <p class="text-slate-500 text-xs mt-0.5"><%= [employee.position, employee.dept].filter(Boolean).join(' · ') %></p>
+          <% } %>
+        </div>
+      <% } %>
+
+      <p class="text-[11px] text-slate-400 mt-6 leading-relaxed">
+        ปิดหน้านี้แล้วกลับไปที่แชทกับ HR Notification ได้เลย
+      </p>
+    </section>
+
+    <footer class="text-center mt-6 text-[11px] text-slate-500">
+      © <%= new Date().getFullYear() + 543 %> QTEC Qualitech · HR Notification
+    </footer>
+  </main>
+</body>
+</html>

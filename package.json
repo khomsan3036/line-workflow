@@ -19,12 +19,17 @@
     "hash-password": "tsx scripts/hash-password.ts",
     "daily-summary": "tsx scripts/daily-summary.ts",
     "daily-report": "tsx scripts/daily-report.ts",
+    "attendance-report": "tsx scripts/attendance-report.ts",
+    "mt-report": "tsx scripts/mt-report.ts",
     "seed:media": "tsx scripts/seed-media.ts",
-    "media:cleanup": "tsx scripts/media-cleanup.ts"
+    "media:cleanup": "tsx scripts/media-cleanup.ts",
+    "mt:publish-test": "tsx scripts/publish-maintenance-event.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
+    "@anthropic-ai/sdk": "^0.124.0",
     "@line/bot-sdk": "^10.4.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "amqplib": "^2.0.1",
     "bcryptjs": "^3.0.2",
     "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.4.7",
@@ -37,6 +42,7 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.8",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^4.17.21",
     "@types/express-session": "^1.18.1",

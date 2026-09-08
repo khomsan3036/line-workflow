@@ -1,15 +1,15 @@
 import express, { type Request, type Response, type Router } from 'express'
 import { asyncRouter } from '../middleware/asyncRouter'
-import { middleware, type WebhookEvent } from '@line/bot-sdk'
+import { validateSignature, type WebhookEvent } from '@line/bot-sdk'
 import { config } from '../config'
-import { pool } from '../db'
-import { getGroupMemberCount, getGroupMemberName, getUserProfileName } from '../line/client'
+import { getGroupMemberCount, getGroupName, getUserProfileName } from '../line/client'
 import { replyAndLog } from '../services/messaging'
 import { saveDirectMessage } from '../services/directMessages'
 import { handleAttendanceQuestion } from '../services/attendanceHandler'
-import { handleMyAttendance } from '../services/myAttendanceHandler'
+import { handleMyAttendance, replyVerifyOnFollow } from '../services/myAttendanceHandler'
+import { handleMaintenanceEvent } from '../services/maintenanceHandler'
 import { upsertGroup } from '../services/groups'
-import { archiveMedia } from '../services/media'
+import { recordGroupMessage } from '../services/groupMessages'
 import { handleUnsend } from '../services/unsend'
 import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
 
@@ -22,32 +22,104 @@ import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, re
 //   3) ต้องไม่ใช้ express.json() ครอบ route นี้ เพราะ middleware ต้องอ่าน raw body
 // ---------------------------------------------------------------------------
 
+type WebhookChannel = 'hr' | 'mt'
+
+/**
+ * ตรวจ signature แล้วบอกว่า event นี้มาจาก OA ไหน
+ *
+ * ทำไมไม่ใช้ middleware() ของ SDK ตรง ๆ: มี OA สองตัวในโปรเซสเดียว และในทางปฏิบัติ Webhook URL ใน
+ * LINE Developers Console ตั้งผิด path กันบ่อย (เช่น OA ทีมซ่อมบำรุงชี้มาที่ /webhook แทน /webhook/mt)
+ * จึงตรวจกับ secret ของ path ที่คาดไว้ก่อน ถ้าไม่ตรงค่อยลอง secret ของอีก OA แล้วส่งต่อให้ถูกตัว
+ * คืน null เมื่อไม่ตรงกับ secret ใดเลย (= ไม่ใช่คำขอจาก LINE ของเรา)
+ */
+function detectChannel(rawBody: Buffer, signature: string | undefined, expected: WebhookChannel): WebhookChannel | null {
+  const secrets: Record<WebhookChannel, string> = {
+    hr: config.channelSecret,
+    mt: config.maintenance.enabled ? config.maintenance.channelSecret : ''
+  }
+  const order: WebhookChannel[] = expected === 'hr' ? ['hr', 'mt'] : ['mt', 'hr']
+
+  if (signature) {
+    for (const channel of order) {
+      if (secrets[channel] && validateSignature(rawBody, secrets[channel], signature)) return channel
+    }
+  }
+
+  // ไม่ได้ตั้ง secret ของ path นี้ไว้ (ช่วงเรียน/ทดสอบ) -> รับโดยไม่ตรวจ แต่เตือนใน log
+  if (!secrets[expected] && (expected === 'hr' || config.maintenance.enabled)) {
+    console.warn(`[Webhook] รับ event ที่ /webhook${expected === 'mt' ? '/mt' : ''} โดยไม่ตรวจ signature (ยังไม่ได้ตั้ง channel secret)`)
+    return expected
+  }
+  return null
+}
+
 export function createWebhookRouter(): Router {
   const router = asyncRouter()
 
-  // ถ้ายังไม่ได้ตั้ง CHANNEL_SECRET (เช่นตอนเรียนช่วงแรก) ให้รับ JSON ตรง ๆ
-  // และเตือนใน log ว่าข้ามการตรวจ signature อยู่ - ห้ามใช้แบบนี้ใน production
-  const verifier = config.channelSecret
-    ? middleware({ channelSecret: config.channelSecret })
-    : express.json()
-
   if (!config.channelSecret) {
-    console.warn('[Webhook] ยังไม่ได้ตั้ง CHANNEL_SECRET จึงข้ามการตรวจ signature (ใช้เฉพาะตอนทดสอบ)')
+    console.warn('[Webhook] ยังไม่ได้ตั้ง CHANNEL_SECRET (หรือ CHANNEL_SECRET_HR) จึงข้ามการตรวจ signature (ใช้เฉพาะตอนทดสอบ)')
+  }
+  if (config.maintenance.enabled && !config.maintenance.channelSecret) {
+    console.warn('[Webhook MT] ยังไม่ได้ตั้ง CHANNEL_SECRET_MT จึงข้ามการตรวจ signature (ใช้เฉพาะตอนทดสอบ)')
   }
 
-  router.post('/webhook', verifier, async (req: Request, res: Response) => {
-    // ตอบ 200 ทันที ไม่ให้ LINE รอ
-    res.status(200).end()
+  // อ่าน body ดิบ (ไม่ผ่าน express.json) เพราะต้องใช้ byte เดิมเป๊ะ ๆ ในการตรวจ HMAC
+  const rawBody = express.raw({ type: '*/*', limit: '1mb' })
 
-    const events: WebhookEvent[] = req.body?.events ?? []
-    for (const event of events) {
+  function webhookHandler(expected: WebhookChannel) {
+    return async (req: Request, res: Response): Promise<void> => {
+      const path = expected === 'hr' ? '/webhook' : '/webhook/mt'
+      const body: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+      const signature = req.get('x-line-signature')
+
+      const channel = detectChannel(body, signature, expected)
+      if (!channel) {
+        console.error(
+          `[Webhook] signature ไม่ตรงกับ channel secret ของ OA ใดเลย (path ${path}${signature ? '' : ', ไม่มี X-Line-Signature'})` +
+            ' -> ตรวจว่า CHANNEL_SECRET_HR / CHANNEL_SECRET_MT ใน .env ตรงกับ channel ที่ตั้ง Webhook URL ไว้'
+        )
+        res.status(401).send('signature validation failed')
+        return
+      }
+
+      let parsed: { destination?: string; events?: WebhookEvent[] }
       try {
-        await handleEvent(event)
-      } catch (err) {
-        console.error('[Webhook] ประมวลผล event ไม่สำเร็จ:', err instanceof Error ? err.message : err)
+        parsed = JSON.parse(body.toString('utf8'))
+      } catch {
+        res.status(400).json({ error: 'invalid request body' })
+        return
+      }
+
+      // ตอบ 200 ทันที ไม่ให้ LINE รอ
+      res.status(200).end()
+
+      if (channel !== expected) {
+        console.warn(
+          `[Webhook] event ของ OA "${channel}" ส่งมาที่ ${path} (ควรเป็น ${channel === 'hr' ? '/webhook' : '/webhook/mt'})` +
+            ' ระบบส่งต่อให้ถูกตัวแล้ว แต่ควรแก้ Webhook URL ใน LINE Developers Console ให้ตรง'
+        )
+      }
+      if (!config.maintenance.enabled && channel === 'mt') return
+
+      const events = parsed.events ?? []
+      const handle = channel === 'hr' ? handleEvent : handleMaintenanceEvent
+      const tag = channel === 'hr' ? '[Webhook]' : '[Webhook MT]'
+      for (const event of events) {
+        try {
+          await handle(event)
+        } catch (err) {
+          console.error(`${tag} ประมวลผล event ไม่สำเร็จ:`, err instanceof Error ? err.message : err)
+        }
       }
     }
-  })
+  }
+
+  // OA หลัก (HR Notification)
+  router.post('/webhook', rawBody, webhookHandler('hr'))
+
+  // OA ทีมซ่อมบำรุง (Maintenance Team) - LINE Developers Console > Messaging API > Webhook URL:
+  //   <PUBLIC_URL>/api/line-workflow/webhook/mt  (nginx ส่งต่อมาที่ /webhook/mt)
+  router.post('/webhook/mt', rawBody, webhookHandler('mt'))
 
   return router
 }
@@ -56,8 +128,8 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
   // 1) บอทถูกเชิญเข้ากลุ่ม -> แนะนำตัว + ขอความยินยอม (สำคัญเรื่อง PDPA)
   if (event.type === 'join' && event.source.type === 'group') {
     const groupId = event.source.groupId
-    const memberCount = await getGroupMemberCount(groupId)
-    await upsertGroup(groupId, { memberCount, isActive: true })
+    const [groupName, memberCount] = await Promise.all([getGroupName(groupId), getGroupMemberCount(groupId)])
+    await upsertGroup(groupId, { groupName, memberCount, isActive: true, channel: 'hr' })
     await replyAndLog({
       replyToken: event.replyToken,
       targetType: 'group',
@@ -76,7 +148,7 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // 2) บอทถูกเชิญออกจากกลุ่ม -> ทำเครื่องหมายว่ากลุ่มไม่ active
   if (event.type === 'leave' && event.source.type === 'group') {
-    await upsertGroup(event.source.groupId, { isActive: false })
+    await upsertGroup(event.source.groupId, { isActive: false, channel: 'hr' })
     console.log(`[Leave] บอทออกจากกลุ่ม ${event.source.groupId}`)
     return
   }
@@ -91,6 +163,13 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // 4) มีคนกดเพิ่มเพื่อนกับ Official Account -> ทักทายและชี้ไปที่ Rich Menu
   if (event.type === 'follow') {
+    // ถ้าตั้ง LINE Login ไว้และผู้ใช้ยังไม่เคยยืนยันตัวตน ให้ส่งการ์ด "ยืนยันตัวตน" แทนข้อความต้อนรับ
+    // (ผูก LINE userId กับรหัสพนักงานตั้งแต่เพิ่มเพื่อน จะได้ใช้ "เวลาเข้างานของฉัน" ได้ทันที)
+    const userId = event.source.userId
+    if (userId && (await replyVerifyOnFollow(userId, event.replyToken))) {
+      console.log('[Follow] มีผู้ใช้เพิ่มเพื่อนกับ OA -> ส่งการ์ดยืนยันตัวตน')
+      return
+    }
     await replyAndLog({
       replyToken: event.replyToken,
       targetId: event.source.userId,
@@ -181,26 +260,8 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   if (event.source.type !== 'group') return
 
-  const groupId = event.source.groupId
-  const userId = event.source.userId ?? null
-  const message = event.message
-  const sentAt = new Date(event.timestamp)
-
-  let displayName: string | null = null
-  if (userId) displayName = await getGroupMemberName(groupId, userId)
-
-  const messageText = message.type === 'text' ? message.text : null
-
-  await upsertGroup(groupId, { touchLastMessage: true })
-  await saveMessage({
-    lineMessageId: message.id,
-    groupId,
-    userId,
-    displayName,
-    messageType: message.type,
-    messageText,
-    sentAt
-  })
+  // บันทึกข้อความ + เก็บไฟล์สื่อ (โค้ดร่วมกับ OA ทีมซ่อมบำรุง อยู่ใน services/groupMessages.ts)
+  const { groupId, messageText } = await recordGroupMessage(event, event.source.groupId, 'hr')
 
   // ในกลุ่มก็ถามสรุปเข้างานได้ (ตอบเฉพาะเมื่อข้อความเป็นคำถามเรื่องนี้ ไม่รบกวนแชทปกติ)
   if (messageText !== null) {
@@ -212,78 +273,7 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     })
     if (attendance) console.log(`[กลุ่ม] "${messageText}" -> ตอบสรุปเข้างาน`)
   }
-
-  // ---------------------------------------------------------------------
-  // ถ้าเป็นรูป วิดีโอ เสียง หรือไฟล์ ให้ดาวน์โหลดมาเก็บถาวรทันที
-  //
-  // ทำไมต้อง "ทันที": เอกสาร LINE ระบุว่าไฟล์ที่ผู้ใช้ส่งจะถูกลบอัตโนมัติ
-  // หลังผ่านไประยะหนึ่ง และไม่เปิดเผยว่ากี่วัน ถ้ารอไปโหลดทีหลังอาจไม่ทัน
-  //
-  // ไม่ await ตรงนี้ เพราะเราตอบ 200 ให้ LINE ไปแล้ว การโหลดไฟล์ใหญ่
-  // ไม่ควรถ่วง event ถัดไป (error จัดการภายใน archiveMedia เองทั้งหมด)
-  // ---------------------------------------------------------------------
-  if (message.type === 'image' || message.type === 'video' || message.type === 'audio' || message.type === 'file') {
-    // ไฟล์ที่ส่งจากบริการภายนอกจะไม่ได้อยู่บนเซิร์ฟเวอร์ LINE จึงดึงไม่ได้
-    const provider = (message as { contentProvider?: { type?: string } }).contentProvider
-    if (provider && provider.type === 'external') {
-      console.log(`[สื่อ] ข้าม ${message.type} เพราะเป็นไฟล์จากภายนอก (contentProvider = external)`)
-      return
-    }
-
-    void archiveMedia({
-      lineMessageId: message.id,
-      groupId,
-      userId,
-      displayName,
-      mediaType: message.type,
-      fileName: message.type === 'file' ? message.fileName : null,
-      fileSize: message.type === 'file' ? Number(message.fileSize) : null,
-      sentAt
-    })
-  }
 }
 
-export interface MessageRecord {
-  lineMessageId: string
-  groupId: string
-  userId: string | null
-  displayName: string | null
-  messageType: string
-  messageText: string | null
-  sentAt: Date
-}
-
-export async function saveMessage(record: MessageRecord): Promise<'inserted' | 'skipped' | 'error'> {
-  const sql = `
-    INSERT INTO line_messages
-      (line_message_id, group_id, user_id, display_name, message_type, message_text, sent_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    ON CONFLICT (line_message_id) DO NOTHING`
-
-  try {
-    const result = await pool.query(sql, [
-      record.lineMessageId,
-      record.groupId,
-      record.userId,
-      record.displayName,
-      record.messageType,
-      record.messageText,
-      record.sentAt
-    ])
-    const who = record.displayName ?? record.userId ?? 'ไม่ทราบผู้ส่ง'
-
-    // rowCount = 0 แปลว่าชนกับข้อมูลเดิม ถูกข้ามด้วย ON CONFLICT DO NOTHING
-    if (!result.rowCount) {
-      console.log(`[ข้าม] ข้อความซ้ำ id=${record.lineMessageId} จาก ${who}`)
-      return 'skipped'
-    }
-
-    const preview = record.messageText ?? `[${record.messageType}]`
-    console.log(`[บันทึก] ${who} (${record.messageType}): ${preview}`)
-    return 'inserted'
-  } catch (err) {
-    // DB พังก็แค่ log ไว้ ไม่ throw เพราะ webhook ตอบ 200 ไปแล้ว
-    console.error('[DB] บันทึกข้อความไม่สำเร็จ:', err instanceof Error ? err.message : err)
-    return 'error'
-  }
-}
+// admin.ts (ปุ่ม "สร้างข้อความทดสอบ") ยัง import จากที่นี่
+export { saveMessage, type MessageRecord } from '../services/groupMessages'

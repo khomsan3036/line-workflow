@@ -107,7 +107,9 @@ export async function runDailySummary(options: DailySummaryOptions = {}): Promis
         }))
       }),
       sentBy,
-      dryRun
+      dryRun,
+      // ส่งด้วย OA ที่อยู่ในกลุ่มนั้น (กลุ่มของทีมซ่อมบำรุงใช้ OA MT ถ้าส่งด้วย HR จะได้ "Failed to send messages")
+      channel: group.channel
     })
 
     results.push({

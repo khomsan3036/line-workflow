@@ -1,4 +1,5 @@
 import { query, queryOne } from '../db'
+import type { ChannelKey } from '../line/client'
 
 // ---------------------------------------------------------------------------
 // ทะเบียนกลุ่ม LINE ที่บอทเข้าร่วม
@@ -13,6 +14,8 @@ export interface GroupRow {
   joined_at: Date
   last_message_at: Date | null
   note: string | null
+  /** OA ที่อยู่ในกลุ่มนี้ (hr / mt) - ใช้เลือก token ตอนส่งข้อความ */
+  channel: ChannelKey
   message_count?: number
 }
 
@@ -22,17 +25,27 @@ export async function upsertGroup(groupId: string, patch: {
   memberCount?: number | null
   isActive?: boolean
   touchLastMessage?: boolean
+  /** OA ที่รับ event นี้ (ไม่ระบุ = คงค่าเดิม, กลุ่มใหม่ = hr) */
+  channel?: ChannelKey
 } = {}): Promise<void> {
   await query(
-    `INSERT INTO line_groups (group_id, group_name, member_count, is_active, last_message_at)
+    `INSERT INTO line_groups (group_id, group_name, member_count, is_active, last_message_at, channel)
      VALUES ($1, $2::text, $3::integer, COALESCE($4::boolean, true),
-             CASE WHEN $5::boolean THEN now() ELSE NULL END)
+             CASE WHEN $5::boolean THEN now() ELSE NULL END, COALESCE($6::text, 'hr'))
      ON CONFLICT (group_id) DO UPDATE SET
         group_name      = COALESCE(EXCLUDED.group_name, line_groups.group_name),
         member_count    = COALESCE(EXCLUDED.member_count, line_groups.member_count),
         is_active       = COALESCE($4::boolean, line_groups.is_active),
-        last_message_at = CASE WHEN $5::boolean THEN now() ELSE line_groups.last_message_at END`,
-    [groupId, patch.groupName ?? null, patch.memberCount ?? null, patch.isActive ?? null, patch.touchLastMessage ?? false]
+        last_message_at = CASE WHEN $5::boolean THEN now() ELSE line_groups.last_message_at END,
+        channel         = COALESCE($6::text, line_groups.channel)`,
+    [
+      groupId,
+      patch.groupName ?? null,
+      patch.memberCount ?? null,
+      patch.isActive ?? null,
+      patch.touchLastMessage ?? false,
+      patch.channel ?? null
+    ]
   )
 }
 
@@ -46,6 +59,14 @@ export async function listGroups(): Promise<GroupRow[]> {
             SELECT group_id, COUNT(*) AS cnt FROM line_messages GROUP BY group_id
        ) c ON c.group_id = g.group_id
       ORDER BY g.last_message_at DESC NULLS LAST, g.joined_at DESC`
+  )
+}
+
+/** กลุ่มที่ OA หนึ่ง ๆ ยังอยู่ (ใช้เลือกปลายทางแจ้งเตือนของบอท MT) */
+export async function listActiveGroups(channel: ChannelKey): Promise<GroupRow[]> {
+  return query<GroupRow>(
+    `SELECT * FROM line_groups WHERE channel = $1 AND is_active ORDER BY last_message_at DESC NULLS LAST, joined_at DESC`,
+    [channel]
   )
 }
 

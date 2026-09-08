@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS line_messages (
     created_at      TIMESTAMPTZ DEFAULT now()  -- เวลาที่บันทึกลงฐานข้อมูล
 );
 
+-- OA ที่รับข้อความนี้ (hr = HR Notification, mt = ทีมซ่อมบำรุง) รันซ้ำได้สำหรับฐานข้อมูลเดิม
+ALTER TABLE line_messages ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'hr';
+
 CREATE INDEX IF NOT EXISTS idx_msg_group_time ON line_messages (group_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_msg_user       ON line_messages (user_id);
 CREATE INDEX IF NOT EXISTS idx_msg_sent_at    ON line_messages (sent_at DESC);
@@ -39,6 +42,10 @@ CREATE TABLE IF NOT EXISTS line_groups (
     last_message_at TIMESTAMPTZ,
     note            TEXT
 );
+
+-- OA ที่บอทเข้ากลุ่มนี้: hr = HR Notification, mt = MT Notification
+-- (groupId ของ LINE แยกตาม provider กลุ่มเดียวกันจึงมีคนละ id เมื่อมองจากคนละ OA)
+ALTER TABLE line_groups ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'hr';
 
 -- --------------------------------------------------------------------------
 -- 3) message_logs : บันทึกทุกข้อความที่ "เราส่งออก" (ขาส่ง)
@@ -59,6 +66,9 @@ CREATE TABLE IF NOT EXISTS message_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_created ON message_logs (created_at DESC);
+
+-- OA ที่ใช้ส่ง: hr = OA หลัก (HR Notification), mt = OA ทีมซ่อมบำรุง (Maintenance Team)
+ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'hr';
 
 -- --------------------------------------------------------------------------
 -- 4) group_tasks : งานที่มอบหมายกันในกลุ่ม (AI สกัดมาให้ หรือ admin เพิ่มเอง)
@@ -195,6 +205,8 @@ CREATE TABLE IF NOT EXISTS media_files (
 
 -- เพิ่มคอลัมน์ให้ฐานข้อมูลที่สร้างไว้ก่อนหน้า (รันซ้ำได้ ไม่พัง)
 ALTER TABLE media_files ADD COLUMN IF NOT EXISTS caption VARCHAR(255);
+-- OA ที่รับไฟล์นี้ (ต้องใช้ token ตัวเดียวกันดึงไฟล์จาก LINE)
+ALTER TABLE media_files ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'hr';
 
 CREATE INDEX IF NOT EXISTS idx_media_group_time ON media_files (group_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_media_type       ON media_files (media_type);
@@ -249,6 +261,11 @@ CREATE TABLE IF NOT EXISTS direct_messages (
 CREATE INDEX IF NOT EXISTS idx_dm_user_time ON direct_messages (user_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dm_sent_at   ON direct_messages (sent_at DESC);
 
+-- OA ที่รับข้อความ: hr = OA หลัก, mt = OA ทีมซ่อมบำรุง (แชทบอท MCP)
+-- group_id ใส่เมื่อบอท MT ถูก mention ในกลุ่ม (ข้อความ 1:1 เป็น NULL)
+ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS channel  VARCHAR(16) NOT NULL DEFAULT 'hr';
+ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS group_id VARCHAR(64);
+
 -- --------------------------------------------------------------------------
 -- 11) line_employee_links : ผูก LINE userId กับรหัสพนักงาน (prs_no) ในระบบ HR
 --     ผู้ใช้พิมพ์รหัสครั้งเดียว บอทจะจำไว้ให้ถาม "เวลาเข้างานของฉัน" ได้ทันที
@@ -263,3 +280,30 @@ CREATE TABLE IF NOT EXISTS line_employee_links (
     linked_at    TIMESTAMPTZ  DEFAULT now(),
     updated_at   TIMESTAMPTZ  DEFAULT now()
 );
+
+-- ยืนยันตัวตนผ่าน LINE Login: แถวที่ verified_at เป็น NULL คือ "พิมพ์รหัสเอง" (ยังไม่ผ่านการยืนยัน)
+-- บอทจะตอบเวลาเข้างานให้เฉพาะแถวที่ verified_at ไม่เป็น NULL (เว้นแต่ตั้ง MY_ATTENDANCE_ALLOW_UNVERIFIED=true)
+ALTER TABLE line_employee_links ADD COLUMN IF NOT EXISTS verified_at        TIMESTAMPTZ;
+ALTER TABLE line_employee_links ADD COLUMN IF NOT EXISTS verified_by        VARCHAR(32);   -- line-login | line-login+password
+ALTER TABLE line_employee_links ADD COLUMN IF NOT EXISTS auth_user_id       VARCHAR(64);   -- id ของบัญชีในบริการ auth กลาง
+ALTER TABLE line_employee_links ADD COLUMN IF NOT EXISTS auth_username      VARCHAR(64);   -- username ของบัญชี (ปกติ = prs_no)
+ALTER TABLE line_employee_links ADD COLUMN IF NOT EXISTS line_display_name  VARCHAR(255);  -- ชื่อที่แสดงใน LINE ตอนยืนยัน
+
+-- --------------------------------------------------------------------------
+-- 12) line_login_states : ลิงก์ยืนยันตัวตนแบบใช้ครั้งเดียว (OAuth state + nonce)
+--     บอทสร้าง state ผูกกับ LINE userId แล้วส่งปุ่ม "ยืนยันตัวตน" ไปในแชท 1:1
+--     เมื่อ LINE Login กลับมาที่ /line-login/callback ระบบตรวจ state/nonce แล้วผูกรหัสพนักงาน
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS line_login_states (
+    state         VARCHAR(64)  PRIMARY KEY,
+    nonce         VARCHAR(64)  NOT NULL,
+    line_user_id  VARCHAR(64)  NOT NULL,        -- userId จาก Messaging API ที่ขอยืนยัน
+    id_token      TEXT,                          -- ID token จาก LINE Login (เก็บชั่วคราวระหว่างขั้นกรอกรหัสผ่าน)
+    line_sub      VARCHAR(64),                   -- userId จาก ID token (sub)
+    display_name  VARCHAR(255),
+    created_at    TIMESTAMPTZ  DEFAULT now(),
+    expires_at    TIMESTAMPTZ  NOT NULL,
+    used_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_states_user ON line_login_states (line_user_id, created_at DESC);

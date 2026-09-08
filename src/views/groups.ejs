@@ -14,7 +14,7 @@
   <p class="text-xs text-slate-500 mb-3">
     ปกติกลุ่มจะถูกเพิ่มอัตโนมัติเมื่อบอทถูกเชิญเข้ากลุ่ม ช่องนี้ใช้กรณีที่รู้ groupId อยู่แล้ว (ขึ้นต้นด้วยตัว C)
   </p>
-  <form method="post" action="/groups" class="grid md:grid-cols-3 gap-3 items-end">
+  <form method="post" action="<%= base %>/groups" class="grid md:grid-cols-3 gap-3 items-end">
     <div>
       <label class="label">groupId</label>
       <input name="groupId" class="input" placeholder="Cxxxxxxxxxxxxxxxx" required>
@@ -37,7 +37,9 @@
   <div class="card p-5">
     <div class="flex items-start justify-between gap-4 flex-wrap">
       <div>
-        <div class="font-semibold"><%= g.group_name || '(ยังไม่ตั้งชื่อ)' %></div>
+        <div class="font-semibold"><%= g.group_name || '(ยังไม่ตั้งชื่อ)' %>
+          <% if (maintenanceEnabled) { %><span class="ml-1 text-xs font-normal px-2 py-0.5 rounded-full <%= g.channel === 'mt' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600' %>"><%= channelLabels[g.channel] || g.channel %></span><% } %>
+        </div>
         <div class="text-xs text-slate-400 font-mono mt-0.5"><%= g.group_id %></div>
       </div>
       <div class="flex gap-2 items-center">
@@ -57,7 +59,7 @@
       <div><div class="text-xs text-slate-500">ข้อความล่าสุด</div><div class="font-semibold"><%= formatDateTime(g.last_message_at) %></div></div>
     </div>
 
-    <form method="post" action="/groups/<%= g.group_id %>" class="grid md:grid-cols-4 gap-3 items-end mt-4 pt-4 border-t border-slate-100">
+    <form method="post" action="<%= base %>/groups/<%= g.group_id %>" class="grid md:grid-cols-4 gap-3 items-end mt-4 pt-4 border-t border-slate-100">
       <div>
         <label class="label">ชื่อกลุ่ม</label>
         <input name="groupName" value="<%= g.group_name || '' %>" class="input">

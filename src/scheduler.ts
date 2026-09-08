@@ -1,7 +1,8 @@
 import cron from 'node-cron'
 import { config } from './config'
 import { runDailySummary } from './jobs/dailySummary'
-import { printReport, runDailyReport } from './jobs/dailyReport'
+import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceReport'
+import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
 
 // ---------------------------------------------------------------------------
 // ตัวตั้งเวลาในตัวโปรแกรม (in-process scheduler)
@@ -49,21 +50,63 @@ export function startScheduler(): void {
     cron.schedule(
       config.scheduler.reportCron,
       async () => {
-        console.log(`[scheduler] เริ่มงานรายงานผู้บริหาร ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        console.log(`[scheduler] เริ่มงานสรุปการเข้างาน ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
         try {
-          const outcome = await runDailyReport({ sentBy: 'scheduler:daily-report' })
-          if (outcome.sendStatus === 'no-data') {
-            console.log(`[scheduler]   ไม่พบข้อมูลขายของวันที่ ${outcome.date}`)
+          const outcome = await runAttendanceReport({ sentBy: 'scheduler:attendance-report' })
+          if (outcome.sendStatus === 'not-configured') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง DATABASE_URL_MSSQL (ฐานข้อมูลเครื่องสแกนนิ้ว)')
             return
           }
-          printReport(outcome)
-          console.log(`[scheduler]   ส่งรายงาน: ${outcome.sendStatus}`)
+          if (outcome.sendStatus === 'no-target') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง REPORT_GROUP_IDS หรือ DEFAULT_GROUP_ID')
+            return
+          }
+          printAttendanceReport(outcome)
+          console.log(`[scheduler]   ส่งสรุปการเข้างาน: ${outcome.sendStatus}`)
         } catch (err) {
-          console.error('[scheduler] งานรายงานผิดพลาด:', err instanceof Error ? err.message : err)
+          console.error('[scheduler] งานสรุปการเข้างานผิดพลาด:', err instanceof Error ? err.message : err)
         }
       },
       { timezone: tz }
     )
-    console.log(`[scheduler] ตั้งงานรายงานผู้บริหารไว้ที่ "${config.scheduler.reportCron}" (${tz})`)
+    console.log(`[scheduler] ตั้งงานสรุปการเข้างานไว้ที่ "${config.scheduler.reportCron}" (${tz})`)
+  }
+
+  // OA ทีมซ่อมบำรุง: การ์ด "งานซ่อมค้างวันนี้" และ "แจ้งเตือนงานซ่อมเร่งด่วน" (ว่าง = ปิดงานนั้น)
+  if (config.maintenance.enabled) {
+    const mtJobs: Array<{ kind: MaintenanceReportKind; cron: string; label: string; env: string }> = [
+      { kind: 'pending', cron: config.scheduler.mtPendingCron, label: 'งานซ่อมค้างวันนี้', env: 'MT_PENDING_CRON' },
+      { kind: 'urgent', cron: config.scheduler.mtUrgentCron, label: 'แจ้งเตือนงานซ่อมเร่งด่วน', env: 'MT_URGENT_CRON' }
+    ]
+    for (const job of mtJobs) {
+      if (!job.cron) continue
+      if (!cron.validate(job.cron)) {
+        console.error(`[scheduler] รูปแบบ ${job.env} ไม่ถูกต้อง: ${job.cron}`)
+        continue
+      }
+      cron.schedule(
+        job.cron,
+        async () => {
+          console.log(`[scheduler] เริ่มงาน MT ${job.label} ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+          try {
+            const outcome = await runMaintenanceReport({ kind: job.kind, sentBy: `scheduler:mt-${job.kind}` })
+            if (outcome.sendStatus === 'agent-failed') {
+              console.error(`[scheduler]   แชทบอทตอบไม่ได้: ${outcome.text}`)
+              return
+            }
+            if (outcome.sendStatus === 'no-target') {
+              console.warn('[scheduler]   ข้าม: บอท MT ยังไม่ได้อยู่ในกลุ่มใด (หรือ MT_REPORT_GROUP_IDS ว่าง)')
+              return
+            }
+            printMaintenanceReport(outcome)
+            console.log(`[scheduler]   ${job.label}: ${outcome.sendStatus === 'skipped' ? 'ไม่มีเรื่องด่วน ไม่ส่ง' : outcome.sendStatus}`)
+          } catch (err) {
+            console.error(`[scheduler] งาน MT ${job.label} ผิดพลาด:`, err instanceof Error ? err.message : err)
+          }
+        },
+        { timezone: tz }
+      )
+      console.log(`[scheduler] ตั้งงาน MT ${job.label} ไว้ที่ "${job.cron}" (${tz})`)
+    }
   }
 }

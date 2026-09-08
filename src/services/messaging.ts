@@ -1,5 +1,14 @@
 import { query } from '../db'
-import { broadcastText, pushFlex, pushText, replyFlex, replyText, type SendOutcome } from '../line/client'
+import {
+  broadcastText,
+  isBotInGroup,
+  pushFlex,
+  pushText,
+  replyFlex,
+  replyText,
+  type ChannelKey,
+  type SendOutcome
+} from '../line/client'
 
 // ---------------------------------------------------------------------------
 // ชั้น "ส่งข้อความ + บันทึก log"
@@ -16,6 +25,8 @@ export interface SendRequest {
   contents?: unknown
   sentBy: string
   dryRun?: boolean
+  /** OA ที่ใช้ส่ง (ค่าเริ่มต้น hr = OA หลัก) */
+  channel?: ChannelKey
 }
 
 export interface SendResult extends SendOutcome {
@@ -24,6 +35,7 @@ export interface SendResult extends SendOutcome {
 
 export async function sendAndLog(req: SendRequest): Promise<SendResult> {
   let outcome: SendOutcome
+  const channel = req.channel ?? 'hr'
 
   if (req.dryRun) {
     // dry-run = ประกอบข้อความจริงแต่ไม่ส่งออก ใช้ตรวจหน้าตาก่อนยิงของจริง
@@ -32,9 +44,15 @@ export async function sendAndLog(req: SendRequest): Promise<SendResult> {
   } else if (req.targetType === 'broadcast') {
     outcome = await broadcastText(req.text ?? '')
   } else if (req.kind === 'flex') {
-    outcome = await pushFlex(req.targetId ?? '', req.altText ?? 'ข้อความจากระบบ', req.contents)
+    outcome = await pushFlex(req.targetId ?? '', req.altText ?? 'ข้อความจากระบบ', req.contents, channel)
   } else {
-    outcome = await pushText(req.targetId ?? '', req.text ?? '')
+    outcome = await pushText(req.targetId ?? '', req.text ?? '', channel)
+  }
+
+  // "Failed to send messages" จาก LINE บอกแค่ว่าส่งไม่ได้ ไม่บอกสาเหตุ กรณีที่พบบ่อยที่สุดคือบอทไม่ได้อยู่ในกลุ่ม
+  // (กลุ่มถูกบันทึกไว้ตอนใช้ OA อื่น หรือถูกเชิญออก) จึงตรวจให้แล้วอธิบายเป็นภาษาคน
+  if (outcome.status === 'failed' && req.targetType === 'group' && req.targetId) {
+    outcome = { ...outcome, error: await explainGroupSendError(req.targetId, outcome.error, channel) }
   }
 
   const status = req.dryRun ? 'dry-run' : outcome.status
@@ -50,10 +68,36 @@ export async function sendAndLog(req: SendRequest): Promise<SendResult> {
     payload,
     status,
     error: outcome.error ?? null,
-    sentBy: req.sentBy
+    sentBy: req.sentBy,
+    channel
   })
 
   return { ...outcome, status: outcome.status, logId }
+}
+
+const CHANNEL_LABEL: Record<ChannelKey, string> = { hr: 'HR Notification', mt: 'MT Notification' }
+
+/** เติมคำอธิบายให้ error ตอนส่งเข้ากลุ่มไม่สำเร็จ (ตรวจว่าบอทยังอยู่ในกลุ่มหรือไม่) */
+export async function explainGroupSendError(
+  groupId: string,
+  error: string | undefined,
+  channel: ChannelKey
+): Promise<string> {
+  const raw = error ?? 'ไม่ทราบสาเหตุ'
+  if (!/failed to send messages/i.test(raw)) return raw
+  const inGroup = await isBotInGroup(groupId, channel)
+  if (inGroup === false) {
+    const other: ChannelKey = channel === 'hr' ? 'mt' : 'hr'
+    const otherInGroup = await isBotInGroup(groupId, other)
+    if (otherInGroup) {
+      return `${raw} - บอท "${CHANNEL_LABEL[channel]}" ไม่ได้อยู่ในกลุ่มนี้ แต่บอท "${CHANNEL_LABEL[other]}" อยู่ ให้เลือก "ส่งจาก OA" เป็น ${CHANNEL_LABEL[other]} แล้วส่งใหม่`
+    }
+    return (
+      `${raw} - บอท "${CHANNEL_LABEL[channel]}" ไม่ได้อยู่ในกลุ่มนี้ (กลุ่มอาจถูกบันทึกไว้ตอนใช้ OA อื่น หรือบอทถูกเชิญออก) ` +
+      `ให้เชิญ OA "${CHANNEL_LABEL[channel]}" เข้ากลุ่มแล้วส่งใหม่ (groupId ${groupId})`
+    )
+  }
+  return `${raw} - LINE ปฏิเสธการส่งเข้ากลุ่มนี้ ตรวจว่าบอทยังอยู่ในกลุ่ม และกลุ่มไม่ได้ตั้งค่าบล็อกข้อความจาก OA`
 }
 
 // ---------------------------------------------------------------------------
@@ -77,14 +121,17 @@ export interface ReplyRequest {
   quickReply?: unknown
   /** ระบุที่มาของการตอบ เช่น auto-reply:follow, auto-reply:postback */
   sentBy: string
+  /** OA ที่ใช้ตอบ (ค่าเริ่มต้น hr = OA หลัก) */
+  channel?: ChannelKey
 }
 
 export async function replyAndLog(req: ReplyRequest): Promise<SendResult> {
   const kind = req.kind ?? 'text'
+  const channel = req.channel ?? 'hr'
   const outcome =
     kind === 'flex'
-      ? await replyFlex(req.replyToken, req.text, req.contents, req.quickReply)
-      : await replyText(req.replyToken, req.text, req.quickReply)
+      ? await replyFlex(req.replyToken, req.text, req.contents, req.quickReply, channel)
+      : await replyText(req.replyToken, req.text, req.quickReply, channel)
 
   const logId = await insertLog({
     targetType: req.targetType ?? 'user',
@@ -95,7 +142,8 @@ export async function replyAndLog(req: ReplyRequest): Promise<SendResult> {
     payload: kind === 'flex' ? { altText: req.text, contents: req.contents } : { text: req.text },
     status: outcome.status,
     error: outcome.error ?? null,
-    sentBy: req.sentBy
+    sentBy: req.sentBy,
+    channel
   })
 
   return { ...outcome, logId }
@@ -111,6 +159,7 @@ interface LogEntry {
   status: string
   error: string | null
   sentBy: string
+  channel: ChannelKey
 }
 
 /** บันทึกลง message_logs - ถ้า DB พังก็แค่ log ไว้ ไม่ throw เพราะข้อความส่งออกไปแล้ว */
@@ -118,8 +167,8 @@ async function insertLog(entry: LogEntry): Promise<number | null> {
   try {
     const rows = await query<{ id: number }>(
       `INSERT INTO message_logs
-         (target_type, target_id, target_name, message_kind, preview, payload, status, error, sent_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (target_type, target_id, target_name, message_kind, preview, payload, status, error, sent_by, channel)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
         entry.targetType,
@@ -130,7 +179,8 @@ async function insertLog(entry: LogEntry): Promise<number | null> {
         JSON.stringify(entry.payload),
         entry.status,
         entry.error,
-        entry.sentBy
+        entry.sentBy,
+        entry.channel
       ]
     )
     return rows[0]?.id ?? null
@@ -150,12 +200,13 @@ export interface MessageLogRow {
   status: string
   error: string | null
   sent_by: string | null
+  channel: string
   created_at: Date
 }
 
 export async function listLogs(limit = 100): Promise<MessageLogRow[]> {
   return query<MessageLogRow>(
-    `SELECT id, target_type, target_id, target_name, message_kind, preview, status, error, sent_by, created_at
+    `SELECT id, target_type, target_id, target_name, message_kind, preview, status, error, sent_by, channel, created_at
        FROM message_logs
       ORDER BY created_at DESC
       LIMIT $1`,

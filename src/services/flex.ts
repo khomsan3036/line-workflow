@@ -4,11 +4,12 @@
 // ทดลองแก้ดีไซน์ได้ที่ https://developers.line.biz/flex-simulator/
 // ---------------------------------------------------------------------------
 
+// กติกาอ่านง่ายบนมือถือ (เหมือนการ์ดเวลาเข้างาน): ตัวอักษรเล็กสุด xs, สีจางสุด #6B7280 (contrast > 4.5:1 บนพื้นขาว)
 const LINE_GREEN = '#06C755'
 const NAVY = '#0C1628'
 const RED = '#C8281E'
 const AMBER = '#D97706'
-const GRAY = '#8A94A6'
+const GRAY = '#6B7280'
 
 function textRow(label: string, value: string, valueColor = '#111827') {
   return {
@@ -114,7 +115,7 @@ export function flexDailySummary(input: {
         {
           type: 'text',
           text: 'สร้างอัตโนมัติโดย AI Agent · ข้อมูลจากบทสนทนาในกลุ่มนี้',
-          size: 'xxs',
+          size: 'xs',
           color: GRAY,
           align: 'center',
           wrap: true
@@ -211,8 +212,8 @@ export function flexExecutiveReport(input: {
       spacing: 'md',
       paddingAll: '16px',
       contents: [
-        { type: 'text', text: money(input.totalAmount), size: 'xxl', weight: 'bold', color: NAVY },
-        { type: 'text', text: changeText, size: 'xs', color: changeColor },
+        { type: 'text', text: money(input.totalAmount), size: 'xxl', weight: 'bold', color: NAVY, wrap: true },
+        { type: 'text', text: changeText, size: 'xs', color: changeColor, wrap: true },
         { type: 'separator', margin: 'md' },
         textRow('จำนวนบิล', `${input.orderCount.toLocaleString('th-TH')} บิล`),
         textRow('ยอดเฉลี่ยต่อบิล', money(input.avgOrder)),
@@ -275,7 +276,7 @@ export function flexExecutiveReport(input: {
         {
           type: 'text',
           text: input.footerNote ?? 'รายงานอัตโนมัติ · ข้อมูลจำลองเพื่อการอบรม',
-          size: 'xxs',
+          size: 'xs',
           color: GRAY,
           align: 'center',
           wrap: true

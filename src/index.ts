@@ -7,14 +7,28 @@ import { checkDatabase, pool } from './db'
 import { requireLogin } from './middleware/auth'
 import { createAdminRouter } from './routes/admin'
 import { createAuthRouter } from './routes/auth'
+import { createLineLoginRouter } from './routes/lineLogin'
 import { createWebhookRouter } from './routes/webhook'
 import { startScheduler } from './scheduler'
+import { maintenanceMcpStatus } from './services/maintenanceMcp'
+import { maintenanceEventsStatus, startMaintenanceEventConsumer } from './services/maintenanceEvents'
 
+// ---------------------------------------------------------------------------
+// โครงสร้าง 2 ชั้น
+//   root : รับทุกอย่างที่ต้องอยู่ที่ root เสมอ = /webhook (LINE) และ /health
+//   app  : dashboard ทั้งหมด mount ไว้ใต้ BASE_PATH (ค่าว่าง = root เหมือนเดิม)
+// ทำแบบนี้เพื่อให้วางหลัง nginx gateway ใต้ prefix เช่น /line-workflow/ ได้
+// โดย webhook ยังเป็น /webhook ตามที่ nginx block ของ LINE ชี้มา
+// ---------------------------------------------------------------------------
+const root = express()
 const app = express()
 
 // อยู่หลัง reverse proxy (Render, Nginx, Cloudflare) ต้องเชื่อ header X-Forwarded-*
 // ไม่งั้น cookie แบบ secure จะไม่ถูกส่งกลับ และ req.protocol จะเป็น http ตลอด
-if (config.trustProxy) app.set('trust proxy', 1)
+if (config.trustProxy) {
+  root.set('trust proxy', 1)
+  app.set('trust proxy', 1)
+}
 
 // ---------------------------------------------------------------------------
 // 1) View engine (EJS)
@@ -22,11 +36,36 @@ if (config.trustProxy) app.set('trust proxy', 1)
 app.set('view engine', 'ejs')
 app.set('views', path.join(__dirname, 'views'))
 
+// base path ให้ view ใช้ประกอบลิงก์: href="<%= base %>/messages"
+app.locals.base = config.basePath
+// มี OA ที่สอง (ทีมซ่อมบำรุง) ให้เลือกส่งหรือไม่ (หน้า /send)
+app.locals.maintenanceEnabled = config.maintenance.enabled
+app.locals.channelLabels = { hr: 'HR Notification', mt: 'MT Notification' }
+
+// res.redirect('/x') ในทุก route ให้เติม base path ให้อัตโนมัติ
+// (ไม่เติมซ้ำถ้า URL มี base path อยู่แล้ว เช่น next= จากหน้า login)
+function withBasePath(url: string): string {
+  const base = config.basePath
+  if (!base) return url
+  if (!url.startsWith('/') || url.startsWith('//')) return url
+  if (url === base || url.startsWith(`${base}/`) || url.startsWith(`${base}?`)) return url
+  return base + url
+}
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  const original = res.redirect.bind(res) as (...args: unknown[]) => void
+  res.redirect = ((...args: unknown[]) => {
+    const i = args.findIndex((a) => typeof a === 'string')
+    if (i >= 0) args[i] = withBasePath(args[i] as string)
+    return original(...args)
+  }) as typeof res.redirect
+  next()
+})
+
 // ---------------------------------------------------------------------------
-// 2) Webhook ต้องมาก่อน express.json()
+// 2) Webhook อยู่ที่ root เสมอ และต้องมาก่อน express.json()
 //    เพราะ middleware ตรวจ signature ของ @line/bot-sdk ต้องอ่าน raw body
 // ---------------------------------------------------------------------------
-app.use('/', createWebhookRouter())
+root.use('/', createWebhookRouter())
 
 // ---------------------------------------------------------------------------
 // 3) middleware ทั่วไปสำหรับหน้าเว็บ
@@ -46,10 +85,14 @@ app.use(
   session({
     store: sessionStore,
     secret: config.sessionSecret,
+    // ชื่อ cookie เฉพาะของแอปนี้ + จำกัด path ไว้ที่ base path
+    // จะได้ไม่ชนกับ cookie ของแอปอื่นที่อยู่บนโดเมนเดียวกันหลัง gateway
+    name: 'lineworkflow.sid',
     resave: false,
     saveUninitialized: false,
     proxy: config.trustProxy,
     cookie: {
+      path: config.basePath || '/',
       httpOnly: true,
       sameSite: 'lax',
       // secure = ส่ง cookie เฉพาะผ่าน HTTPS เปิดได้เมื่อขึ้น production ที่มี HTTPS แล้ว
@@ -86,9 +129,16 @@ app.locals.formatMoney = (value: number | null | undefined): string =>
   value === null || value === undefined ? '-' : `${Math.round(Number(value)).toLocaleString('th-TH')} บาท`
 
 // ---------------------------------------------------------------------------
-// 4) health check (เปิดได้โดยไม่ต้องล็อกอิน ใช้ตรวจว่าระบบยังดีอยู่)
+// 4) ไฟล์คงที่ (โลโก้ รูปภาพ) จากโฟลเดอร์ public/ เปิดได้โดยไม่ต้องล็อกอิน
+//    ใช้ process.cwd() เพื่อให้หาเจอทั้งตอน dev (tsx) และตอนรันจาก dist/
 // ---------------------------------------------------------------------------
-app.get('/health', async (_req: Request, res: Response) => {
+app.use(express.static(path.join(process.cwd(), 'public'), { maxAge: '7d' }))
+
+// ---------------------------------------------------------------------------
+// 4.1) health check (เปิดได้โดยไม่ต้องล็อกอิน ใช้ตรวจว่าระบบยังดีอยู่)
+//      อยู่ที่ root เสมอ (Docker healthcheck ใช้) และมีใต้ base path ด้วยเพื่อความสะดวก
+// ---------------------------------------------------------------------------
+async function healthHandler(_req: Request, res: Response): Promise<void> {
   const db = await checkDatabase()
   if (!db.ok) {
     res.status(500).json({ status: 'error', database: 'down', message: db.error })
@@ -98,15 +148,35 @@ app.get('/health', async (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     messagesStored: result.rows[0].count,
-    lineMode: config.mockLine ? 'mock' : 'live'
+    lineMode: config.mockLine ? 'mock' : 'live',
+    maintenance: config.maintenance.enabled
+      ? { lineMode: config.maintenance.mockLine ? 'mock' : 'live', mcp: maintenanceMcpStatus(), events: maintenanceEventsStatus() }
+      : 'off',
+    basePath: config.basePath || '/'
   })
-})
+}
+root.get('/health', healthHandler)
+app.get('/health', healthHandler)
 
 // ---------------------------------------------------------------------------
 // 5) หน้าเว็บ
 // ---------------------------------------------------------------------------
 app.use('/', createAuthRouter())
+// หน้ายืนยันตัวตนด้วย LINE Login (พนักงานเปิดจากปุ่มในแชท) ไม่ต้องล็อกอิน admin
+app.use('/', createLineLoginRouter())
 app.use('/', requireLogin, createAdminRouter())
+
+// ---------------------------------------------------------------------------
+// 5.1) mount dashboard ใต้ base path
+// ---------------------------------------------------------------------------
+if (config.basePath) {
+  root.use(config.basePath, app)
+  // เปิด / ตรง ๆ (เช่นทดสอบในเครื่อง) ให้เด้งไปหน้า dashboard
+  // หลัง nginx gateway / เป็นของแอปอื่น คำขอนี้จะไม่มาถึงที่นี่อยู่แล้ว
+  root.get('/', (_req: Request, res: Response) => res.redirect(`${config.basePath}/`))
+} else {
+  root.use(app)
+}
 
 // ---------------------------------------------------------------------------
 // 6) 404 และ error handler
@@ -128,7 +198,8 @@ app.use((req: Request, res: Response) => {
   })
 })
 
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+// error handler ใช้ร่วมกันทั้ง app (dashboard) และ root (webhook)
+const errorHandler = (err: Error, req: Request, res: Response, _next: NextFunction): void => {
   console.error('[Error]', err.message)
 
   // error จาก middleware ตรวจ signature ของ LINE
@@ -137,9 +208,9 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     return
   }
 
-  // body ที่ส่งมาที่ /webhook ไม่ใช่ JSON ที่ถูกต้อง (ไม่ใช่คำขอจาก LINE)
+  // body ที่ส่งมาที่ /webhook หรือ /webhook/mt ไม่ใช่ JSON ที่ถูกต้อง (ไม่ใช่คำขอจาก LINE)
   // ตอบสั้น ๆ ไม่ต้อง render หน้า HTML เพราะปลายทางเป็นเครื่อง ไม่ใช่คน
-  if (req.path === '/webhook') {
+  if (req.path === '/webhook' || req.path.startsWith('/webhook/')) {
     res.status(400).json({ error: 'invalid request body' })
     return
   }
@@ -158,7 +229,9 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     mockLine: config.mockLine,
     currentPath: req.path
   })
-})
+}
+app.use(errorHandler)
+root.use(errorHandler)
 
 // ---------------------------------------------------------------------------
 // 7) กันเซิร์ฟเวอร์ล่มจาก error ที่หลุดรอดออกมา
@@ -188,14 +261,15 @@ async function start(): Promise<void> {
     console.warn('    ถ้าจำเป็นต้องเข้าผ่าน http ล้วน ให้ตั้ง COOKIE_SECURE=false')
   }
 
-  app.listen(config.port, () => {
+  root.listen(config.port, () => {
     console.log('')
     console.log('  LINE Workflow Automation Workshop 2026')
     console.log('  ---------------------------------------------------------------')
     console.log(`   ${describeConfig()}`)
     console.log('  ---------------------------------------------------------------')
-    console.log(`   Dashboard : http://localhost:${config.port}/`)
+    console.log(`   Dashboard : http://localhost:${config.port}${config.basePath}/`)
     console.log(`   Webhook   : POST http://localhost:${config.port}/webhook`)
+    console.log(`   Webhook MT: POST http://localhost:${config.port}/webhook/mt`)
     console.log(`   Health    : GET  http://localhost:${config.port}/health`)
     console.log('  ---------------------------------------------------------------')
     if (!db.ok) {
@@ -209,6 +283,8 @@ async function start(): Promise<void> {
 
     // ตัวตั้งเวลาในตัว (ใช้แทน Task Scheduler เมื่อ deploy บน cloud)
     if (db.ok) startScheduler()
+    // รับ event จากระบบซ่อมบำรุงผ่าน RabbitMQ แล้วแจ้งเข้าไลน์กลุ่มด้วย OA MT
+    if (db.ok && config.maintenance.enabled) startMaintenanceEventConsumer()
   })
 }
 

@@ -9,7 +9,7 @@
 <% } %>
 
 <div class="grid lg:grid-cols-2 gap-4">
-  <form method="post" action="/send" class="card p-5 space-y-4">
+  <form method="post" action="<%= base %>/send" class="card p-5 space-y-4">
     <div class="card-title">ประกอบข้อความ</div>
 
     <div class="grid md:grid-cols-2 gap-3">
@@ -26,13 +26,25 @@
         <select name="targetId" class="input" id="targetSelect">
           <option value="">-- เลือกกลุ่ม --</option>
           <% groups.forEach(function (g) { %>
-            <option value="<%= g.group_id %>" <%= (form.targetId || selectedGroup) === g.group_id ? 'selected' : '' %>>
-              <%= g.group_name || g.group_id %>
+            <option value="<%= g.group_id %>" data-channel="<%= g.channel %>" <%= (form.targetId || selectedGroup) === g.group_id ? 'selected' : '' %>>
+              <%= g.group_name || g.group_id %><%= maintenanceEnabled ? ' (' + (channelLabels[g.channel] || g.channel) + ')' : '' %>
             </option>
           <% }) %>
         </select>
       </div>
     </div>
+
+    <% if (maintenanceEnabled) { %>
+    <div>
+      <label class="label">ส่งจาก OA</label>
+      <select name="channel" class="input" id="channelSelect">
+        <option value="" <%= !form.channel ? 'selected' : '' %>>อัตโนมัติ (ตาม OA ที่อยู่ในกลุ่มที่เลือก)</option>
+        <option value="hr" <%= form.channel === 'hr' ? 'selected' : '' %>>HR Notification</option>
+        <option value="mt" <%= form.channel === 'mt' ? 'selected' : '' %>>MT Notification (ทีมซ่อมบำรุง)</option>
+      </select>
+      <p class="text-xs text-slate-400 mt-1">groupId ของ LINE แยกตาม OA กลุ่มเดียวกันจึงปรากฏคนละรายการ ส่งได้เฉพาะจาก OA ที่อยู่ในกลุ่มนั้น</p>
+    </div>
+    <% } %>
 
     <div>
       <label class="label">ชนิดข้อความ</label>

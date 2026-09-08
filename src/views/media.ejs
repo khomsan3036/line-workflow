@@ -50,7 +50,7 @@
 
 <!-- ตัวกรอง -->
 <div class="card p-4">
-  <form method="get" action="/media" class="grid md:grid-cols-6 gap-3 items-end">
+  <form method="get" action="<%= base %>/media" class="grid md:grid-cols-6 gap-3 items-end">
     <div class="md:col-span-2">
       <label class="label">ค้นหาชื่อไฟล์ / คำบรรยาย</label>
       <input name="q" value="<%= filter.keyword || '' %>" class="input" placeholder="เช่น ใบเสร็จ, .pdf">
@@ -79,7 +79,7 @@
     <input type="hidden" name="group" value="<%= filter.groupId || '' %>">
     <div class="md:col-span-6 flex gap-2">
       <button class="btn btn-dark">ค้นหา</button>
-      <a href="/media<%= filter.groupId ? '?group=' + encodeURIComponent(filter.groupId) : '' %>" class="btn btn-ghost">ล้างเงื่อนไข</a>
+      <a href="<%= base %>/media<%= filter.groupId ? '?group=' + encodeURIComponent(filter.groupId) : '' %>" class="btn btn-ghost">ล้างเงื่อนไข</a>
       <span class="text-sm text-slate-500 self-center ml-2">
         พบ <span class="font-semibold text-slate-900"><%= formatNumber(total) %></span> ไฟล์ · หน้า <%= page %> / <%= totalPages %>
       </span>
@@ -101,8 +101,8 @@
     <div class="card overflow-hidden group">
       <div class="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
         <% if (m.media_type === 'image') { %>
-          <a href="/media/<%= m.id %>/file" target="_blank" class="w-full h-full">
-            <img src="/media/<%= m.id %>/file?preview=1" alt="<%= m.caption || fileLabel(m) %>"
+          <a href="<%= base %>/media/<%= m.id %>/file" target="_blank" class="w-full h-full">
+            <img src="<%= base %>/media/<%= m.id %>/file?preview=1" alt="<%= m.caption || fileLabel(m) %>"
                  class="w-full h-full object-cover" loading="lazy">
           </a>
         <% } else if (m.media_type === 'video') { %>
@@ -133,7 +133,7 @@
         <% } %>
         <div class="text-[11px] text-slate-400 mt-1 truncate"><%= m.display_name || 'ไม่ทราบผู้ส่ง' %></div>
         <div class="text-[11px] text-slate-400"><%= formatDateTime(m.sent_at) %></div>
-        <form method="post" action="/media/<%= m.id %>/caption" class="mt-2 flex gap-1">
+        <form method="post" action="<%= base %>/media/<%= m.id %>/caption" class="mt-2 flex gap-1">
           <input type="hidden" name="groupId" value="<%= filter.groupId || '' %>">
           <input type="hidden" name="q" value="<%= filter.keyword || '' %>">
           <input type="hidden" name="type" value="<%= filter.mediaType || '' %>">
@@ -147,8 +147,8 @@
           <span class="badge bg-slate-100 text-slate-600"><%= formatBytes(Number(m.size_bytes || 0)) %></span>
           <div class="flex gap-1">
             <a class="btn btn-ghost text-xs" style="height:26px;padding:0 8px"
-               href="/media/<%= m.id %>/file?download=1">โหลด</a>
-            <form method="post" action="/media/<%= m.id %>/delete" onsubmit="return confirm('ลบไฟล์นี้ออกจากระบบ?')">
+               href="<%= base %>/media/<%= m.id %>/file?download=1">โหลด</a>
+            <form method="post" action="<%= base %>/media/<%= m.id %>/delete" onsubmit="return confirm('ลบไฟล์นี้ออกจากระบบ?')">
               <input type="hidden" name="groupId" value="<%= filter.groupId || '' %>">
               <button class="btn btn-danger text-xs" style="height:26px;padding:0 8px">ลบ</button>
             </form>

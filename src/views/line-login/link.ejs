@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <%- include('_head') %>
+</head>
+<body class="min-h-screen bg-scene flex items-center justify-center p-6">
+  <main class="w-full max-w-sm">
+    <header class="text-center mb-6">
+      <div class="logo-badge inline-flex items-center justify-center bg-white rounded-2xl px-7 py-4 mb-5">
+        <img src="<%= base %>/images/qtecLogo.png" alt="QTEC Qualitech" class="h-14 w-auto select-none" draggable="false">
+      </div>
+      <h1 class="text-white text-xl font-semibold tracking-tight">HR Notification</h1>
+      <p class="text-slate-400 text-sm mt-1">ผูกรหัสพนักงานกับ LINE ของคุณ (ทำครั้งเดียว)</p>
+    </header>
+
+    <section class="card bg-white rounded-2xl p-6">
+      <!-- ตัวตน LINE ที่ตรวจแล้ว -->
+      <div class="flex items-center gap-3 rounded-xl border border-[#06C755]/30 bg-[#06C755]/5 p-3 mb-5">
+        <% if (pictureUrl) { %>
+          <img src="<%= pictureUrl %>" alt="" class="h-11 w-11 rounded-full object-cover shrink-0">
+        <% } else { %>
+          <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#06C755] text-white font-bold">L</span>
+        <% } %>
+        <div class="min-w-0">
+          <p class="truncate font-medium text-slate-900"><%= displayName || 'ผู้ใช้ LINE' %></p>
+          <p class="text-xs font-medium text-[#06C755]">✓ ยืนยันกับ LINE แล้ว</p>
+        </div>
+      </div>
+
+      <h2 class="text-slate-900 text-base font-semibold">เข้าสู่ระบบด้วยรหัสพนักงาน</h2>
+      <p class="text-slate-500 text-xs mt-0.5 mb-5">
+        ใช้รหัสพนักงานและรหัสผ่านเดียวกับระบบ qtecintegra ครั้งต่อไปกดยืนยันด้วย LINE ได้ทันทีโดยไม่ต้องกรอกอีก
+      </p>
+
+      <% if (error) { %>
+        <div role="alert" class="mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm bg-red-50 text-red-700 border border-red-100">
+          <span class="mt-0.5 shrink-0" aria-hidden="true">⚠</span>
+          <span><%= error %></span>
+        </div>
+      <% } %>
+
+      <form method="post" action="<%= base %>/line-login/link" class="space-y-4" autocomplete="on">
+        <input type="hidden" name="state" value="<%= state %>">
+
+        <div>
+          <label for="username" class="block text-xs text-slate-600 mb-1.5 font-medium">รหัสพนักงาน</label>
+          <input id="username" name="username" autocomplete="username" required autofocus
+                 value="<%= username %>" placeholder="เช่น S69-1-003" autocapitalize="characters"
+                 class="field w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none">
+        </div>
+
+        <div>
+          <label for="password" class="block text-xs text-slate-600 mb-1.5 font-medium">รหัสผ่าน</label>
+          <div class="relative">
+            <input id="password" name="password" type="password" autocomplete="current-password" required
+                   placeholder="••••••••"
+                   class="field w-full px-3.5 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none">
+            <button type="button" id="togglePassword" aria-label="แสดงรหัสผ่าน"
+                    class="absolute inset-y-0 right-0 px-3 text-slate-400 hover:text-slate-600 text-xs font-medium">แสดง</button>
+          </div>
+        </div>
+
+        <button class="btn w-full bg-[#06C755] hover:bg-[#05a948] text-white rounded-xl py-2.5 text-sm font-semibold shadow-sm shadow-emerald-900/20">
+          ผูกกับ LINE นี้
+        </button>
+      </form>
+
+      <p class="text-[11px] text-slate-400 mt-5 text-center leading-relaxed">
+        ยังไม่มีบัญชี? สมัครด้วยรหัสพนักงานได้ที่ระบบ qtecintegra ก่อน แล้วกลับมากดปุ่มยืนยันตัวตนในแชทอีกครั้ง
+      </p>
+    </section>
+
+    <footer class="text-center mt-6 text-[11px] text-slate-500">
+      © <%= new Date().getFullYear() + 543 %> QTEC Qualitech · HR Notification
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      var input = document.getElementById('password')
+      var btn = document.getElementById('togglePassword')
+      if (!input || !btn) return
+      btn.addEventListener('click', function () {
+        var show = input.type === 'password'
+        input.type = show ? 'text' : 'password'
+        btn.textContent = show ? 'ซ่อน' : 'แสดง'
+        input.focus()
+      })
+    })()
+  </script>
+</body>
+</html>

@@ -11,13 +11,34 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   return value.toLowerCase() === 'true' || value === '1'
 }
 
-const channelAccessToken = process.env.CHANNEL_ACCESS_TOKEN ?? ''
-const channelSecret = process.env.CHANNEL_SECRET ?? ''
+// LINE OA หลัก (HR Notification) - รับชื่อแบบมี _HR ต่อท้ายด้วย เพื่อให้ตั้งคู่กับ OA อื่นในไฟล์เดียวกันได้
+const channelAccessToken = process.env.CHANNEL_ACCESS_TOKEN_HR ?? process.env.CHANNEL_ACCESS_TOKEN ?? ''
+const channelSecret = process.env.CHANNEL_SECRET_HR ?? process.env.CHANNEL_SECRET ?? ''
+
+// LINE OA ที่สอง (Maintenance Team) - แชทบอทถาม-ตอบข้อมูลซ่อมบำรุงผ่าน MCP server
+const maintenanceChannelAccessToken = process.env.CHANNEL_ACCESS_TOKEN_MT ?? ''
+const maintenanceChannelSecret = process.env.CHANNEL_SECRET_MT ?? ''
 
 // ถ้าไม่ได้ตั้ง token ไว้ ให้บังคับเป็นโหมด mock เสมอ (ยิง API จริงไม่ได้อยู่ดี)
-const mockLine = bool(process.env.MOCK_LINE, true) || channelAccessToken === ''
+const mockLineFlag = bool(process.env.MOCK_LINE, true)
+const mockLine = mockLineFlag || channelAccessToken === ''
 
 const nodeEnv = process.env.NODE_ENV ?? 'development'
+
+// เส้นทางฐาน (base path) เมื่อ dashboard อยู่หลัง reverse proxy ใต้ prefix เดียวกับแอปอื่น
+// เช่น BASE_PATH=/line-workflow -> เปิดที่ https://qtecintegra.com/line-workflow/
+// ค่าว่าง = อยู่ที่ root ตามปกติ (webhook และ /health อยู่ที่ root เสมอ ไม่ขึ้นกับค่านี้)
+function normalizeBasePath(value: string | undefined): string {
+  const trimmed = (value ?? '').trim()
+  if (trimmed === '' || trimmed === '/') return ''
+  return '/' + trimmed.replace(/^\/+|\/+$/g, '')
+}
+function stripSlash(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+// URL สาธารณะของแอป ใช้สร้างลิงก์ที่ส่งเข้าแชท (ตอนพัฒนาใช้ ngrok URL แทน localhost)
+const publicUrl = stripSlash((process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).trim())
+
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/linechat'
 
 // ผู้ให้บริการฐานข้อมูลบน cloud (เช่น Neon, Supabase, Render) บังคับใช้ SSL
@@ -29,6 +50,7 @@ export const config = {
   isProduction: nodeEnv === 'production',
   port: Number(process.env.PORT ?? 3000),
   timezone: process.env.TZ ?? 'Asia/Bangkok',
+  basePath: normalizeBasePath(process.env.BASE_PATH),
 
   databaseUrl,
   databaseSsl,
@@ -47,10 +69,114 @@ export const config = {
     process.env.MANPOWER_API_URL ?? 'https://qtecintegra.com/api/hr/api/v1/Manpower/GetManpowerByDate',
   manpowerApiTimeoutMs: Number(process.env.MANPOWER_API_TIMEOUT_MS ?? 15000),
 
+  // URL สาธารณะของแอปนี้ (ไม่มี / ท้าย) ใช้ประกอบลิงก์ที่ส่งไปในแชท เช่น ปุ่ม "ยืนยันตัวตน"
+  // production: https://qtecintegra.com (ร่วมกับ BASE_PATH=/line-workflow)
+  publicUrl,
+
+  // บริการยืนยันตัวตนกลางของ QTEC (qtecintegra) ใช้ผูก LINE userId กับบัญชีพนักงาน (prs_no)
+  // รองรับชื่อตัวแปรแบบ NEXT_PUBLIC_* ด้วย เพื่อให้ใช้ค่าเดียวกับโปรเจกต์ qtec-integra ได้
+  auth: {
+    apiUrl: stripSlash(
+      process.env.AUTH_API_URL ?? process.env.NEXT_PUBLIC_AUTH_API_URL ?? 'https://qtecintegra.com/api/auth'
+    ),
+    empApiUrl: stripSlash(
+      process.env.EMP_AUTH_API_URL ?? process.env.NEXT_PUBLIC_EMP_AUTH_API_URL ?? 'https://qtecintegra.com/api/emp/auth'
+    ),
+    timeoutMs: Number(process.env.AUTH_API_TIMEOUT_MS ?? 15000)
+  },
+
+  // LINE Login (OAuth 2.1 + OpenID Connect) สำหรับยืนยันว่า LINE userId นี้เป็นพนักงานคนไหนจริง ๆ
+  // ใช้ channel LINE Login เดียวกับ qtec-integra ได้ แต่ต้องเพิ่ม callback URL ของแอปนี้ใน LINE Developers Console
+  lineLogin: {
+    channelId: process.env.LINE_LOGIN_CHANNEL_ID ?? process.env.NEXT_PUBLIC_LINE_CHANNEL_ID ?? '',
+    channelSecret: process.env.LINE_LOGIN_CHANNEL_SECRET ?? '',
+    // ค่าเริ่มต้น = <PUBLIC_URL><BASE_PATH>/line-login/callback
+    callbackUrl:
+      process.env.LINE_LOGIN_CALLBACK_URL ?? `${publicUrl}${normalizeBasePath(process.env.BASE_PATH)}/line-login/callback`,
+    // อายุของลิงก์ยืนยันตัวตนที่ส่งไปในแชท (นาที)
+    stateTtlMinutes: Number(process.env.LINE_LOGIN_STATE_TTL_MINUTES ?? 30),
+    // บังคับให้ userId จาก LINE Login ตรงกับ userId ของ Messaging API (ต้องอยู่ provider เดียวกันใน LINE Developers)
+    // ปิดได้เมื่อ channel ทั้งสองอยู่คนละ provider (userId จะไม่ตรงกัน) โดยระบบจะเชื่อการผูกผ่านลิงก์ในแชทแทน
+    requireSameUser: bool(process.env.LINE_LOGIN_REQUIRE_SAME_USER, true),
+    timeoutMs: Number(process.env.LINE_LOGIN_TIMEOUT_MS ?? 10000),
+    get enabled(): boolean {
+      return this.channelId !== '' && this.channelSecret !== ''
+    }
+  },
+
+  // "เวลาเข้างานของฉัน": อนุญาตให้พิมพ์รหัสพนักงานเองโดยไม่ยืนยันตัวตนหรือไม่
+  // ค่าเริ่มต้น false = ต้องผ่าน LINE Login ก่อนเสมอ (ใช้ true เฉพาะตอนพัฒนาที่ยังไม่มี LINE Login channel)
+  myAttendanceAllowUnverified: bool(process.env.MY_ATTENDANCE_ALLOW_UNVERIFIED, false),
+
   channelAccessToken,
   channelSecret,
   mockLine,
   defaultGroupId: process.env.DEFAULT_GROUP_ID ?? '',
+
+  // ---------------------------------------------------------------------
+  // Maintenance Team OA: แชทบอทที่ตอบคำถามเรื่องซ่อมบำรุง/น้ำมัน/รถ โดยเรียก tool
+  // จาก MCP server ของระบบ maintenance (https://qtecintegra.com/maintenance/mcp)
+  // webhook อยู่ที่ POST /webhook/mt (คนละ channel secret กับ OA หลัก)
+  // ---------------------------------------------------------------------
+  maintenance: {
+    channelAccessToken: maintenanceChannelAccessToken,
+    channelSecret: maintenanceChannelSecret,
+    // โหมด mock ของ OA นี้: ตาม MOCK_LINE หรือเมื่อยังไม่ได้ใส่ token
+    mockLine: mockLineFlag || maintenanceChannelAccessToken === '',
+    mcpUrl: stripSlash((process.env.MAINTENANCE_MCP_URL ?? 'https://qtecintegra.com/maintenance/mcp').trim()),
+    // header เพิ่มเติมตอนเรียก MCP (ถ้าเซิร์ฟเวอร์ต้องการ) เช่น Authorization: Bearer xxx
+    mcpAuthHeader: process.env.MAINTENANCE_MCP_AUTH_HEADER ?? '',
+    mcpTimeoutMs: Number(process.env.MAINTENANCE_MCP_TIMEOUT_MS ?? 60000),
+    // URL หน้าเว็บระบบซ่อมบำรุง (ไม่มี / ท้าย) ใช้ทำปุ่ม "เปิดหน้าอนุมัติ" ในการ์ดแจ้งเตือน ปล่อยว่าง = ไม่มีปุ่ม
+    webUrl: stripSlash((process.env.MAINTENANCE_WEB_URL ?? '').trim()),
+    // จำกัดชื่อ tool ที่ให้บอทเรียกได้ (คั่นด้วยจุลภาค, รองรับ * เช่น Get*) ค่าว่างหรือ * = ทุก tool
+    mcpTools: (process.env.MAINTENANCE_MCP_TOOLS ?? '*')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean),
+    // ผู้ให้บริการโมเดล (โปรเจกต์นี้ใช้ OpenAI เป็นหลัก เหมือนฟีเจอร์สรุปแชท)
+    //   auto = OpenAI ก่อน (OPENAI_API_KEY) แล้วสำรองด้วย Claude เมื่อ OpenAI ใช้ไม่ได้
+    //   openai / anthropic = บังคับใช้ตัวนั้นตัวเดียว
+    provider: (process.env.MAINTENANCE_AI_PROVIDER ?? 'auto') as 'auto' | 'anthropic' | 'openai',
+    // โมเดล Claude ที่ใช้เมื่อสลับไป Anthropic (ฝั่ง OpenAI ใช้ OPENAI_MODEL)
+    model: process.env.MAINTENANCE_AI_MODEL ?? 'claude-opus-5',
+    // ความละเอียดในการคิด low | medium | high | xhigh | max (แชทถาม-ตอบใช้ medium พอ ตอบเร็วกว่า)
+    effort: (process.env.MAINTENANCE_AI_EFFORT ?? 'medium') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+    // จำนวนรอบเรียก tool สูงสุดต่อคำถาม กันวนไม่รู้จบ
+    maxToolRounds: Number(process.env.MAINTENANCE_AI_MAX_TOOL_ROUNDS ?? 8),
+    // จำข้อความก่อนหน้าของผู้ใช้คนเดิมกี่คู่ (ถาม-ตอบ) เพื่อให้คุยต่อเนื่องได้
+    historyPairs: Number(process.env.MAINTENANCE_AI_HISTORY_PAIRS ?? 6),
+    // ประวัติที่เก่ากว่านี้ (นาที) ไม่นำมาใช้ต่อบทสนทนา
+    historyMaxAgeMinutes: Number(process.env.MAINTENANCE_AI_HISTORY_MAX_AGE_MINUTES ?? 120),
+    // เวลารวมสูงสุดต่อคำถาม (ms) เกินนี้จะตอบว่าขออภัย
+    answerTimeoutMs: Number(process.env.MAINTENANCE_AI_TIMEOUT_MS ?? 120000),
+    // true = log ผลลัพธ์ tool และคำตอบดิบของโมเดล (ใช้ตอนดีบักว่าโมเดลเห็นอะไร)
+    debug: bool(process.env.MAINTENANCE_DEBUG, false),
+
+    // -------------------------------------------------------------------
+    // รับ event จากระบบซ่อมบำรุง (RabbitMQ topic exchange "maintenance") แล้วแจ้งเข้าไลน์กลุ่มด้วย OA MT
+    // ปล่อย RABBITMQ_URL ว่าง = ปิด (บอทยังตอบแชทได้ตามปกติ)
+    // -------------------------------------------------------------------
+    events: {
+      url: (process.env.RABBITMQ_URL ?? '').trim(),
+      exchange: process.env.MAINTENANCE_EXCHANGE ?? 'maintenance',
+      // ชื่อ queue ของแอปนี้ (durable) ถ้ารันหลาย instance จะแบ่งกันรับ ไม่ซ้ำ
+      queue: process.env.MAINTENANCE_EVENT_QUEUE ?? 'line-workflow.maintenance-alerts',
+      routingKeys: (
+        process.env.MAINTENANCE_EVENT_ROUTING_KEYS ??
+        'maintenance.line.notification,repair.requested,fuel.requested,vehicle.booking.requested'
+      )
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean),
+      get enabled(): boolean {
+        return this.url !== ''
+      }
+    },
+    get enabled(): boolean {
+      return this.channelSecret !== '' || this.channelAccessToken !== ''
+    }
+  },
 
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
@@ -107,7 +233,28 @@ export const config = {
     enabled: bool(process.env.ENABLE_SCHEDULER, false),
     // รูปแบบ cron 5 ช่อง: นาที ชั่วโมง วันที่ เดือน วันในสัปดาห์ (เวลาตาม TZ ด้านบน)
     summaryCron: process.env.SUMMARY_CRON ?? '0 18 * * *',
-    reportCron: process.env.REPORT_CRON ?? '0 8 * * *'
+    // REPORT_CRON ส่งการ์ด "สรุปการเข้างาน" (จำนวนพนักงานสแกนเข้างาน) ไม่ใช่รายงานยอดขายจำลองของหลักสูตรอีกต่อไป
+    reportCron: process.env.REPORT_CRON ?? '0 8 * * *',
+    // ปลายทางของการ์ดสรุปการเข้างาน คั่นด้วยจุลภาค (C... = กลุ่ม, U... = ผู้ใช้สำหรับทดสอบ) ว่าง = ใช้ DEFAULT_GROUP_ID
+    reportTargets: (process.env.REPORT_GROUP_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    // ช่วงเวลาที่สรุป: today | yesterday | thisWeek | lastWeek | thisMonth | lastMonth
+    reportPeriod: (process.env.REPORT_PERIOD ?? 'today').trim(),
+    // สถานที่: all | workshop | site
+    reportLocation: (process.env.REPORT_LOCATION ?? 'all').trim(),
+
+    // OA ทีมซ่อมบำรุง (ใช้ได้เมื่อตั้ง OA MT แล้ว)
+    //   MT_PENDING_CRON = การ์ด "งานซ่อมค้างวันนี้" ทุกเช้า
+    //   MT_URGENT_CRON  = การ์ด "แจ้งเตือนงานซ่อมเร่งด่วน" ส่งเฉพาะเมื่อมีเรื่องด่วน (ว่าง = ปิด)
+    mtPendingCron: (process.env.MT_PENDING_CRON ?? '30 8 * * *').trim(),
+    mtUrgentCron: (process.env.MT_URGENT_CRON ?? '0 10,14 * * *').trim(),
+    // ปลายทางของการ์ด MT คั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ทุกกลุ่มที่บอท MT อยู่
+    mtReportTargets: (process.env.MT_REPORT_GROUP_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
   }
 }
 
@@ -123,7 +270,7 @@ export function cronTimeLabel(expr: string): string | null {
 }
 
 /**
- * ประโยคบอกรอบการส่งรายงาน ใช้ทั้งท้ายการ์ด Flex และหน้า /sales
+ * ประโยคบอกรอบการส่งการ์ดสรุปการเข้างาน (REPORT_CRON) ใช้ในหน้า dashboard และ log
  * ถ้ายังไม่ได้เปิดตัวตั้งเวลา จะไม่โฆษณาว่าส่งอัตโนมัติ (กันผู้เรียนเข้าใจผิด)
  */
 export function reportScheduleNote(): string | null {
@@ -132,6 +279,27 @@ export function reportScheduleNote(): string | null {
   if (!label) return `ตั้งเวลาส่งอัตโนมัติไว้แล้ว (REPORT_CRON = ${config.scheduler.reportCron})`
   const hour = Number(label.slice(0, 2))
   return `ส่งอัตโนมัติ${hour < 12 ? 'ทุกเช้า' : 'ทุกวัน'} ${label}`
+}
+
+/** ผู้ให้บริการโมเดลของแชทบอทซ่อมบำรุงตามลำดับ (ตัวแรก = หลัก, ตัวถัดไป = สำรองเมื่อตัวแรกใช้ไม่ได้) */
+export function maintenanceProviderOrder(): Array<'anthropic' | 'openai'> {
+  const pref = config.maintenance.provider
+  const has = { anthropic: config.anthropic.apiKey !== '', openai: config.openai.apiKey !== '' }
+  if (pref === 'anthropic') return has.anthropic ? ['anthropic'] : []
+  if (pref === 'openai') return has.openai ? ['openai'] : []
+  const order: Array<'anthropic' | 'openai'> = []
+  if (has.openai) order.push('openai')
+  if (has.anthropic) order.push('anthropic')
+  return order
+}
+
+/** ชื่อโมเดลที่แชทบอทซ่อมบำรุงจะใช้ (แสดงใน log ตอนเริ่มระบบ) */
+export function maintenanceModelLabel(): string {
+  const order = maintenanceProviderOrder()
+  if (order.length === 0) return 'ยังไม่มี API key (ANTHROPIC_API_KEY หรือ OPENAI_API_KEY)'
+  return order
+    .map((p) => (p === 'anthropic' ? `Claude ${config.maintenance.model}` : `OpenAI ${config.openai.model}`))
+    .join(' -> ')
 }
 
 /**
@@ -147,11 +315,27 @@ export function aiProviderLabel(): string {
 export function describeConfig(): string {
   const lines = [
     `สภาพแวดล้อม   : ${config.nodeEnv}`,
+    `Base path      : ${config.basePath || '/ (root)'}`,
     `ฐานข้อมูล      : ${config.databaseUrl.replace(/:[^:@/]*@/, ':****@')}${config.databaseSsl ? ' (SSL)' : ''}`,
     `โหมด LINE      : ${config.mockLine ? 'MOCK (ไม่ยิง API จริง)' : 'LIVE (ส่งเข้า LINE จริง)'}`,
     `Channel secret : ${config.channelSecret ? 'ตั้งค่าแล้ว (ตรวจ signature)' : 'ยังไม่ตั้ง (webhook จะข้ามการตรวจ signature)'}`,
+    `Maintenance OA : ${
+      config.maintenance.enabled
+        ? `เปิด (/webhook/mt, ${config.maintenance.mockLine ? 'MOCK' : 'LIVE'}, MCP ${config.maintenance.mcpUrl}, โมเดล ${maintenanceModelLabel()})`
+        : 'ยังไม่ตั้ง CHANNEL_ACCESS_TOKEN_MT/CHANNEL_SECRET_MT'
+    }`,
+    `MT events      : ${
+      config.maintenance.events.enabled
+        ? `รับจาก RabbitMQ ${config.maintenance.events.url.replace(/:[^:@/]*@/, ':****@')} (${config.maintenance.events.routingKeys.join(', ')})`
+        : 'ปิด (ไม่ได้ตั้ง RABBITMQ_URL)'
+    }`,
     `Session        : ${config.sessionInDatabase ? 'เก็บใน PostgreSQL' : 'เก็บใน memory (หายเมื่อ restart)'}`,
     `AI สรุปแชท     : ${aiProviderLabel()}`,
+    `LINE Login     : ${
+      config.lineLogin.enabled
+        ? `เปิด (channel ${config.lineLogin.channelId}, callback ${config.lineLogin.callbackUrl})`
+        : `ยังไม่ตั้ง LINE_LOGIN_CHANNEL_ID/SECRET${config.myAttendanceAllowUnverified ? ' (อนุญาตพิมพ์รหัสเองได้)' : ' (เวลาเข้างานของฉันจะใช้ไม่ได้)'}`
+    }`,
     `เก็บไฟล์สื่อ    : ${
       config.media.enabled
         ? `เปิด (${config.media.driver === 'local' ? `ดิสก์ ${config.media.localDir}` : 's3'}, สูงสุด ${config.media.maxSizeMb} MB/ไฟล์)`
@@ -159,7 +343,13 @@ export function describeConfig(): string {
     }`,
     `ตัวตั้งเวลา     : ${
       config.scheduler.enabled
-        ? `เปิด (สรุป ${config.scheduler.summaryCron} / รายงาน ${config.scheduler.reportCron})`
+        ? `เปิด (สรุปแชท ${config.scheduler.summaryCron} / สรุปการเข้างาน ${config.scheduler.reportCron} -> ${
+            config.scheduler.reportTargets.length > 0 ? config.scheduler.reportTargets.join(', ') : config.defaultGroupId || 'ยังไม่ได้ตั้งปลายทาง'
+          }${
+            config.maintenance.enabled
+              ? ` / MT งานซ่อมค้าง ${config.scheduler.mtPendingCron || 'ปิด'} / MT เร่งด่วน ${config.scheduler.mtUrgentCron || 'ปิด'}`
+              : ''
+          })`
         : 'ปิด (ใช้ Task Scheduler หรือ cron ภายนอก)'
     }`
   ]

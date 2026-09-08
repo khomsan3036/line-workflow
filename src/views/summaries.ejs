@@ -6,7 +6,7 @@
   <p class="text-xs text-slate-500 mb-4">
     ระบบจะอ่านข้อความของกลุ่มในวันที่เลือก สรุปประเด็นสำคัญ และสกัด "งานที่มีคนรับไปทำ" เข้าหน้าติดตามงานให้อัตโนมัติ
   </p>
-  <form method="post" action="/summaries/generate" class="grid md:grid-cols-4 gap-3 items-end">
+  <form method="post" action="<%= base %>/summaries/generate" class="grid md:grid-cols-4 gap-3 items-end">
     <div class="md:col-span-2">
       <label class="label">กลุ่ม</label>
       <select name="groupId" class="input" required>
@@ -41,7 +41,7 @@
           <%= formatNumber(s.message_count) %> ข้อความ · โมเดล <%= s.model %> · สรุปเมื่อ <%= formatDateTime(s.created_at) %>
         </div>
       </div>
-      <form method="post" action="/summaries/<%= s.id %>/send" class="flex gap-2">
+      <form method="post" action="<%= base %>/summaries/<%= s.id %>/send" class="flex gap-2">
         <button name="action" value="dry" class="btn btn-ghost">ทดสอบ dry-run</button>
         <button name="action" value="send" class="btn btn-primary">ส่งสรุปเข้ากลุ่ม</button>
       </form>

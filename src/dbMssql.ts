@@ -36,4 +36,16 @@ export async function getMssqlPool(): Promise<sql.ConnectionPool> {
   return poolPromise
 }
 
+/** ปิด pool (ใช้ตอนจบสคริปต์ CLI ไม่งั้นโปรเซสไม่ออก) */
+export async function closeMssqlPool(): Promise<void> {
+  if (!poolPromise) return
+  try {
+    const pool = await poolPromise
+    await pool.close()
+  } catch {
+    // ต่อไม่ติดตั้งแต่แรกก็ไม่มีอะไรต้องปิด
+  }
+  poolPromise = null
+}
+
 export { sql }

@@ -79,7 +79,7 @@
   <div class="card p-5">
     <div class="flex items-center justify-between mb-3">
       <div class="card-title">งานค้างล่าสุด</div>
-      <a href="/tasks<%= selectedGroup ? '?group=' + encodeURIComponent(selectedGroup) : '' %>" class="text-xs text-line font-medium">ดูทั้งหมด</a>
+      <a href="<%= base %>/tasks<%= selectedGroup ? '?group=' + encodeURIComponent(selectedGroup) : '' %>" class="text-xs text-line font-medium">ดูทั้งหมด</a>
     </div>
     <% if (openTasks.length === 0) { %>
       <p class="text-sm text-slate-400">ไม่มีงานค้าง ลองสั่ง AI สรุปบทสนทนาเพื่อสกัดงานออกมา</p>
@@ -102,7 +102,7 @@
   <div class="card p-5">
     <div class="flex items-center justify-between mb-3">
       <div class="card-title">การส่งข้อความล่าสุด</div>
-      <a href="/logs" class="text-xs text-line font-medium">ดูทั้งหมด</a>
+      <a href="<%= base %>/logs" class="text-xs text-line font-medium">ดูทั้งหมด</a>
     </div>
     <% if (recentLogs.length === 0) { %>
       <p class="text-sm text-slate-400">ยังไม่มีการส่งข้อความออกจากระบบ</p>

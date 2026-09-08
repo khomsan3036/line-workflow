@@ -9,6 +9,9 @@ import { config } from './config'
 export const pool = new Pool({
   connectionString: config.databaseUrl,
   max: config.poolMax,
+  // ถ้าต่อฐานข้อมูลไม่ได้ (เช่น อยู่นอกเครือข่ายบริษัท) ให้ล้มเร็ว ๆ
+  // ไม่งั้นเซิร์ฟเวอร์จะค้างตอนเริ่มระบบโดยไม่แสดง error อะไรเลย
+  connectionTimeoutMillis: 5000,
   // ฐานข้อมูลบน cloud (Neon, Supabase, Render) บังคับ SSL
   // ปกติใบรับรองออกโดย CA สาธารณะ จึงตรวจสอบได้ตามปกติ
   ssl: config.databaseSsl ? { rejectUnauthorized: !config.databaseSslNoVerify } : undefined

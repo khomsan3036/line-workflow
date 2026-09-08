@@ -8,7 +8,7 @@
 <% } %>
 
 <div class="card p-4">
-  <form method="get" action="/sales" class="flex gap-3 items-end flex-wrap">
+  <form method="get" action="<%= base %>/sales" class="flex gap-3 items-end flex-wrap">
     <div>
       <label class="label">วันที่รายงาน</label>
       <input type="date" name="date" value="<%= date %>" class="input">
@@ -69,7 +69,7 @@
   <p class="text-xs text-slate-500 mb-3">
     ระบบจะประกอบเป็น Flex Message พร้อมส่วนแจ้งเตือนสีแดงเมื่อพบรายการผิดปกติ - แนะนำให้กด dry-run ตรวจก่อนส่งจริง
   </p>
-  <form method="post" action="/sales/send" class="flex gap-3 items-end flex-wrap">
+  <form method="post" action="<%= base %>/sales/send" class="flex gap-3 items-end flex-wrap">
     <input type="hidden" name="date" value="<%= date %>">
     <div class="min-w-[260px]">
       <label class="label">กลุ่มปลายทาง</label>
@@ -83,12 +83,9 @@
     <button name="action" value="dry" class="btn btn-ghost">ทดสอบ dry-run</button>
     <button name="action" value="send" class="btn btn-primary">ส่งรายงาน</button>
   </form>
-  <div class="mt-3 pt-3 border-t border-slate-100 text-[11px] <%= scheduleNote ? 'text-line' : 'text-slate-400' %>">
-    <% if (scheduleNote) { %>
-      ตั้งเวลา<%= scheduleNote %> ไว้แล้ว (REPORT_CRON = <%= reportCron %>)
-    <% } else { %>
-      ยังไม่ได้เปิดตัวตั้งเวลาในตัวโปรแกรม - ตั้ง ENABLE_SCHEDULER=true เพื่อให้ส่งเองทุกวันตาม REPORT_CRON (<%= reportCron %>)
-    <% } %>
+  <div class="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-400">
+    รายงานยอดขาย (ข้อมูลจำลอง) ส่งได้จากหน้านี้หรือ npm run daily-report เท่านั้น
+    ตัวตั้งเวลา REPORT_CRON (<%= reportCron %>) ใช้ส่งการ์ด "สรุปการเข้างาน" เข้ากลุ่มตาม REPORT_GROUP_IDS
   </div>
 </div>
 

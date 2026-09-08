@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { config } from '../config'
 import { query, queryOne } from '../db'
-import { getContentTranscodingStatus, getMessageContent, getMessageContentPreview } from '../line/client'
+import { getContentTranscodingStatus, getMessageContent, getMessageContentPreview, type ChannelKey } from '../line/client'
 import { formatBytes, getStorage } from './storage'
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,7 @@ export interface MediaRow {
   error: string | null
   sent_at: Date | null
   archived_at: Date | null
+  channel?: ChannelKey
 }
 
 export interface ArchiveInput {
@@ -43,6 +44,8 @@ export interface ArchiveInput {
   fileName?: string | null
   fileSize?: number | null
   sentAt: Date
+  /** OA ที่รับข้อความนี้ (ต้องใช้ token ตัวเดียวกันดึงไฟล์) ค่าเริ่มต้น hr */
+  channel?: ChannelKey
 }
 
 const EXT_BY_TYPE: Record<string, string> = {
@@ -124,6 +127,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * วิดีโอและเสียงต้องรอ LINE แปลงไฟล์เสร็จก่อน จึงมีการ retry ให้
  */
 export async function archiveMedia(input: ArchiveInput): Promise<'stored' | 'skipped' | 'failed'> {
+  const channel: ChannelKey = input.channel ?? 'hr'
   if (!config.media.enabled) return 'skipped'
   if (!config.media.types.includes(input.mediaType)) return 'skipped'
 
@@ -137,14 +141,14 @@ export async function archiveMedia(input: ArchiveInput): Promise<'stored' | 'ski
     // วิดีโอ/เสียง: รอ LINE แปลงไฟล์ให้เสร็จก่อน (สูงสุดราว 15 วินาที)
     if (input.mediaType === 'video' || input.mediaType === 'audio') {
       for (let i = 0; i < 5; i += 1) {
-        const status = await getContentTranscodingStatus(input.lineMessageId)
+        const status = await getContentTranscodingStatus(input.lineMessageId, channel)
         if (status === null || status === 'succeeded') break
         if (status === 'failed') throw new Error('LINE แปลงไฟล์ไม่สำเร็จ (transcoding failed)')
         await sleep(3000)
       }
     }
 
-    const content = await getMessageContent(input.lineMessageId)
+    const content = await getMessageContent(input.lineMessageId, channel)
     if (content.buffer.length > maxBytes) {
       await recordFailure(input, `ไฟล์ใหญ่เกินกำหนด (${formatBytes(content.buffer.length)})`, 'skipped')
       return 'skipped'
@@ -159,7 +163,7 @@ export async function archiveMedia(input: ArchiveInput): Promise<'stored' | 'ski
     let previewKey: string | null = null
     if (config.media.savePreview && (input.mediaType === 'image' || input.mediaType === 'video')) {
       try {
-        const preview = await getMessageContentPreview(input.lineMessageId)
+        const preview = await getMessageContentPreview(input.lineMessageId, channel)
         previewKey = buildKey(input, 'jpg', true)
         await storage.put(previewKey, preview.buffer)
       } catch {
@@ -170,17 +174,17 @@ export async function archiveMedia(input: ArchiveInput): Promise<'stored' | 'ski
     await query(
       `INSERT INTO media_files
          (line_message_id, group_id, user_id, display_name, media_type, file_name, content_type,
-          size_bytes, storage_driver, storage_key, preview_key, checksum, status, sent_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'stored',$13)
+          size_bytes, storage_driver, storage_key, preview_key, checksum, status, sent_at, channel)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'stored',$13,$14)
        ON CONFLICT (line_message_id) DO NOTHING`,
       [
         input.lineMessageId, input.groupId, input.userId, input.displayName, input.mediaType,
         input.fileName ?? null, content.contentType, put.size, storage.driver, put.key,
-        previewKey, put.checksum, input.sentAt
+        previewKey, put.checksum, input.sentAt, channel
       ]
     )
 
-    console.log(`[สื่อ] เก็บ ${input.mediaType} ${formatBytes(put.size)} -> ${put.key}`)
+    console.log(`[สื่อ${channel === 'hr' ? '' : `:${channel}`}] เก็บ ${input.mediaType} ${formatBytes(put.size)} -> ${put.key}`)
     return 'stored'
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -195,12 +199,12 @@ async function recordFailure(input: ArchiveInput, reason: string, status: 'faile
     await query(
       `INSERT INTO media_files
          (line_message_id, group_id, user_id, display_name, media_type, file_name,
-          storage_driver, storage_key, status, error, sent_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'',$8,$9,$10)
+          storage_driver, storage_key, status, error, sent_at, channel)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'',$8,$9,$10,$11)
        ON CONFLICT (line_message_id) DO NOTHING`,
       [
         input.lineMessageId, input.groupId, input.userId, input.displayName, input.mediaType,
-        input.fileName ?? null, config.media.driver, status, reason, input.sentAt
+        input.fileName ?? null, config.media.driver, status, reason, input.sentAt, input.channel ?? 'hr'
       ]
     )
   } catch {
