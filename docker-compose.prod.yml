@@ -1,0 +1,123 @@
+# ==========================================================================
+# LINE Workflow App - deploy บน Windows Server (Docker Desktop / Docker Engine)
+#
+# ใช้กับ image ที่โหลดจาก offline bundle (ไม่ต้องต่ออินเทอร์เน็ตตอน deploy)
+#
+#   1) คัดลอก .env.example เป็น .env แล้วกรอกค่าจริง
+#   2) docker compose -f docker-compose.prod.yml up -d                # app อย่างเดียว (ใช้ฐานข้อมูลที่มีอยู่แล้ว)
+#      docker compose -f docker-compose.prod.yml --profile localdb up -d   # app + PostgreSQL ในเครื่องเดียวกัน
+#   3) ครั้งแรก สร้างตาราง:
+#      docker compose -f docker-compose.prod.yml --profile setup run --rm db-setup
+#   4) ดู log:  docker compose -f docker-compose.prod.yml logs -f app
+#
+# ค่าที่ต้องรู้เมื่ออยู่ใน container
+#   - ถ้าใช้ PostgreSQL ใน compose นี้: DATABASE_URL=postgres://postgres:<รหัส>@postgres:5432/linechat
+#   - ถ้าฐานข้อมูล/SQL Server อยู่บนเครื่อง Windows เดียวกัน ให้ใช้ host.docker.internal แทน localhost
+#     เช่น DATABASE_URL_MSSQL=Server=host.docker.internal\SQLEXPRESS01;Database=...;
+#     (SQL Server ต้องเปิด TCP/IP และ SQL Browser หรือระบุพอร์ตตรง ๆ Server=host.docker.internal,1433)
+#   - เครื่องอื่นใน LAN ใช้ IP ตามปกติ (192.168.x.x)
+#   - ค่าใน .env ที่มีเครื่องหมาย $ (เช่น ADMIN_PASSWORD_HASH ที่ขึ้นต้น $2b$ หรือรหัสผ่านที่มี $)
+#     ต้องครอบด้วย single quote: ADMIN_PASSWORD_HASH='$2b$10$...'
+#     ไม่งั้น docker compose จะตีความ $xxx เป็นตัวแปรแล้วค่าหายไป
+# ==========================================================================
+
+x-app-image: &app-image ${APP_IMAGE:-line-workflow-app:latest}
+
+services:
+  app:
+    image: *app-image
+    container_name: line-workflow-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      # ภายใน container ฟิกไว้ที่ 3000 เสมอ (healthcheck และ nginx.conf ชี้มาที่ line-workflow-app:3000)
+      # ค่า PORT ใน .env ใช้กำหนด "พอร์ตบนเครื่อง host" ที่ map เข้ามา (ดู ports ด้านล่าง)
+      PORT: 3000
+      TZ: ${TZ:-Asia/Bangkok}
+      # อยู่หลัง reverse proxy (IIS / nginx / Cloudflare Tunnel) ที่ทำ HTTPS ให้
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # ถ้าเปิดผ่าน http://<ip>:<PORT> ตรง ๆ โดยไม่มี HTTPS ต้องตั้ง COOKIE_SECURE=false ใน .env ไม่งั้นล็อกอินไม่ติด
+    ports:
+      # host:container - เปลี่ยนพอร์ตบน host ด้วย PORT ใน .env (เช่น PORT=5318 -> http://<ip>:5318)
+      - "${PORT:-3000}:3000"
+    volumes:
+      # ไฟล์ภาพ/เอกสารจากไลน์กลุ่ม (storage/media) เก็บเป็น bind mount ลงโฟลเดอร์จริงบนเครื่อง Windows
+      # จะได้เปิดดู/สำรอง/ย้ายไฟล์ด้วย Explorer ได้ตรง ๆ และไม่หายเมื่ออัปเดต image
+      #   ค่าเริ่มต้น D:\QTEC\File_Storage\LineWorkflow  (เขียนใน compose ด้วย / แทน \ ได้)
+      #   เปลี่ยนได้ด้วย MEDIA_HOST_DIR ใน .env เช่น MEDIA_HOST_DIR=E:/Data/LineWorkflow
+      #   ถ้าโฟลเดอร์ยังไม่มี load-and-run จะสร้างให้ (docker เองก็สร้างให้ตอน up)
+      #   ภายใน container ยังเป็น /app/storage เหมือนเดิม จึงไม่ต้องแก้ MEDIA_LOCAL_DIR
+      - ${MEDIA_HOST_DIR:-D:/QTEC/File_Storage/LineWorkflow}:/app/storage
+      # รายงาน HTML ที่สร้าง เก็บใน named volume (ไม่จำเป็นต้องเปิดดูจาก Windows)
+      - reports:/app/reports
+    extra_hosts:
+      # ให้ container เรียกบริการบนเครื่อง Windows host ได้ผ่านชื่อ host.docker.internal
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      # เข้าร่วม network ของ nginx gateway (engflow_default) เพื่อให้ nginx.conf
+      # proxy มาที่ชื่อ line-workflow-app:3000 ได้ ถ้ายังไม่มี network นี้ให้สร้างก่อน:
+      #   docker network create engflow_default
+      - gateway
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # ---------- PostgreSQL ในเครื่องเดียวกัน (เปิดด้วย --profile localdb) ----------
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: line-workflow-postgres
+    profiles: ["localdb"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-linechat}
+      TZ: ${TZ:-Asia/Bangkok}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # เปิดพอร์ตออกนอกเครื่องเฉพาะเมื่อต้องต่อด้วย pgAdmin/DBeaver จากเครื่องอื่น
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-linechat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- สร้างตาราง + ข้อมูลตัวอย่าง รันครั้งเดียว (--profile setup) ----------
+  db-setup:
+    image: *app-image
+    profiles: ["setup"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Bangkok}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ใส่ --reset ต่อท้ายถ้าต้องการล้างตารางทั้งหมดก่อน:
+    #   docker compose -f docker-compose.prod.yml --profile setup run --rm db-setup node dist/scripts/db-setup.js --reset
+    command: ["node", "dist/scripts/db-setup.js"]
+
+networks:
+  default:
+  gateway:
+    external: true
+    name: ${GATEWAY_NETWORK:-engflow_default}
+
+volumes:
+  # media ย้ายไปเป็น bind mount (MEDIA_HOST_DIR) แล้ว - ถ้าเคยรันเวอร์ชันเก่าที่ใช้ named volume
+  # line-workflow-app_media ให้ย้ายไฟล์ตามขั้นตอนใน README-DEPLOY.md หัวข้อ "ย้ายไฟล์สื่อจาก volume เดิม"
+  reports:
+  pgdata:

@@ -13,3 +13,6 @@ storage/
 
 # สำเนา .env ที่มีรหัสผ่านจริง
 .env.bak*
+
+# ผลลัพธ์จาก offline-bundle.sh (ไฟล์ใหญ่)
+offline-bundle/

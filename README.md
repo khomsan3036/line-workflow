@@ -40,6 +40,7 @@ npm run dev
 | `npm run hash-password -- <รหัส>` | สร้าง bcrypt hash สำหรับ `ADMIN_PASSWORD_HASH` |
 | `npm run daily-summary -- --dry-run` | สรุปแชทประจำวัน (ไม่ส่งออก) |
 | `npm run daily-report -- --dry-run --html` | รายงานผู้บริหาร + เขียนไฟล์ HTML |
+| `npm run mt:publish-test -- repair` | จำลอง event ระบบซ่อมบำรุงลง RabbitMQ (repair / fuel / vehicle / mcp) ทดสอบแจ้งเข้าไลน์กลุ่ม |
 
 ---
 
@@ -48,8 +49,12 @@ npm run dev
 | ตัวแปร | ความหมาย |
 | --- | --- |
 | `DATABASE_URL` | เช่น `postgres://postgres:postgres@localhost:5432/linechat` |
-| `CHANNEL_ACCESS_TOKEN` | จาก LINE Developers Console > tab Messaging API |
-| `CHANNEL_SECRET` | จาก tab **Basic settings** (คนละค่ากับ token) ใช้ตรวจ signature |
+| `CHANNEL_ACCESS_TOKEN` (หรือ `CHANNEL_ACCESS_TOKEN_HR`) | จาก LINE Developers Console > tab Messaging API |
+| `CHANNEL_SECRET` (หรือ `CHANNEL_SECRET_HR`) | จาก tab **Basic settings** (คนละค่ากับ token) ใช้ตรวจ signature |
+| `CHANNEL_ACCESS_TOKEN_MT` / `CHANNEL_SECRET_MT` | OA ที่สอง "ทีมซ่อมบำรุง" (webhook `/webhook/mt`) แชทบอทตอบด้วย Claude + MCP tool |
+| `MAINTENANCE_MCP_URL` / `MAINTENANCE_MCP_TOOLS` | MCP server ของระบบซ่อมบำรุง และรายชื่อ tool ที่อนุญาต (เช่น `Get*` = อ่านอย่างเดียว) |
+| `RABBITMQ_URL` | ถ้าตั้ง แอปจะรับ event จากระบบซ่อมบำรุง (exchange `maintenance`: `repair.requested`, `fuel.requested`, `vehicle.booking.requested`, `maintenance.*.notification`) แล้วส่งการ์ดแจ้งเตือนเข้าไลน์กลุ่มที่บอท MT อยู่ |
+| `MAINTENANCE_AI_PROVIDER` | โมเดลของแชทบอทซ่อมบำรุง: `openai` (ใช้ `OPENAI_API_KEY`/`OPENAI_MODEL`), `anthropic`, หรือ `auto` (OpenAI ก่อน สำรองด้วย Claude) |
 | `MOCK_LINE` | `true` = ไม่ยิง LINE API จริง (ค่าเริ่มต้น) / `false` = ส่งจริง |
 | `DEFAULT_GROUP_ID` | groupId ปลายทางเริ่มต้นของสคริปต์ตั้งเวลา |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | บัญชีเข้า dashboard |
@@ -60,6 +65,7 @@ npm run dev
 | `MEDIA_ARCHIVE_ENABLED` | เปิด/ปิดการเก็บภาพและไฟล์จากไลน์กลุ่ม |
 | `MEDIA_STORAGE_DRIVER` | `local` (ดิสก์) หรือ `s3` (object storage) |
 | `MEDIA_LOCAL_DIR` | โฟลเดอร์เก็บไฟล์เมื่อใช้ดิสก์ (ค่าเริ่มต้น `storage/media`) |
+| `MEDIA_HOST_DIR` | (เฉพาะ `docker-compose.prod.yml`) โฟลเดอร์บนเครื่อง Windows ที่ bind mount เป็น `/app/storage` (ค่าเริ่มต้น `D:/QTEC/File_Storage/LineWorkflow`) |
 | `MEDIA_MAX_SIZE_MB` | ขนาดไฟล์สูงสุดที่ยอมโหลด (ค่าเริ่มต้น 25 MB) |
 
 ---
@@ -126,6 +132,30 @@ DATABASE_URL="postgres://...-pooler.../linechat?sslmode=require" npm run db:setu
 | `ENABLE_SCHEDULER` | `true` | ให้โปรแกรมตั้งเวลารันงานเอง แทน Windows Task Scheduler |
 | `PG_POOL_MAX` | `5` | ฐานข้อมูลฟรีจำกัดจำนวน connection |
 | `SESSION_SECRET` | ข้อความสุ่มยาว | ห้ามใช้ค่าเริ่มต้นบน production |
+
+---
+
+## Deploy บน Windows Server ด้วย Docker (offline)
+
+สำหรับเครื่องภายในองค์กรที่ไม่ต่ออินเทอร์เน็ต หรือไม่อยากให้ดึง image เอง
+
+```bash
+# บนเครื่อง dev (Mac/Linux ที่มี Docker): build + แพ็กทุกอย่างเป็น zip
+./offline-bundle.sh            # หรือ ./offline-bundle.sh v1.0.0
+# ได้ offline-bundle/line-workflow-app_<tag>.zip  -> ก๊อปไปเครื่อง Windows Server
+```
+
+บน Windows Server: แตก zip, `copy .env.example .env` แล้วกรอกค่าจริง, จากนั้น
+
+```bat
+load-and-run.bat setup            # มี PostgreSQL อยู่แล้ว (Command Prompt)
+load-and-run.bat localdb setup    # ให้ compose เปิด PostgreSQL ให้ด้วย
+```
+
+หรือใช้ PowerShell: `.\load-and-run.ps1 -Setup` / `.\load-and-run.ps1 -LocalDb -Setup`
+
+ไฟล์ที่เกี่ยวข้อง: `Dockerfile`, `docker-compose.prod.yml`, `offline-bundle.sh`,
+`deploy/windows/README-DEPLOY.md` (ขั้นตอนละเอียด, ค่า .env, ปัญหาที่พบบ่อย)
 
 ---
 
