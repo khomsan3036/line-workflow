@@ -13,6 +13,9 @@ import { config } from '../config'
 
 export type LocationFilter = 'all' | 'Workshop' | 'Site'
 
+/** มุมมองการแยกตัวเลข: ตามสถานที่ (ค่าเริ่มต้น) / ตามแผนก / ตามตำแหน่ง */
+export type GroupBy = 'location' | 'department' | 'position'
+
 export type PeriodKey =
   | 'today'
   | 'yesterday'
@@ -36,6 +39,11 @@ export interface DatePeriod {
 export interface AttendanceQuery {
   period: DatePeriod
   location: LocationFilter
+  groupBy: GroupBy
+  /** กรองเฉพาะแผนกนี้ (ชื่อตามทะเบียน HR เช่น "IT", "QA/QC") ไม่ระบุ = ทุกแผนก */
+  department?: string
+  /** กรองเฉพาะตำแหน่งนี้ (ชื่อตาม JOBTITLE เช่น "Fitter A", "Foreman") ไม่ระบุ = ทุกตำแหน่ง */
+  position?: string
 }
 
 // คำที่บอกว่าผู้ใช้กำลังถามเรื่องการเข้างาน (ต้องเจออย่างน้อย 1 คำ)
@@ -55,8 +63,125 @@ const INTENT_WORDS = [
   'check in',
   'checkin',
   'check-in',
-  'checktimein'
+  'checktimein',
+  // ถามแบบแยกตามแผนก/ตำแหน่ง เช่น "แยกตามแผนก วันนี้", "ตามตำแหน่ง site"
+  'ตามแผนก',
+  'แยกแผนก',
+  'รายแผนก',
+  'ตามฝ่าย',
+  'ตามหน่วยงาน',
+  'ตามตำแหน่ง',
+  'แยกตำแหน่ง',
+  'รายตำแหน่ง'
 ]
+
+// เรียงคำเฉพาะเจาะจงก่อน: "แผนก IT ตามสถานที่" ต้องได้ตามสถานที่ ไม่ใช่ตามแผนก (คำว่า แผนก อยู่ในตัวกรอง)
+const GROUP_WORDS: { key: GroupBy; words: string[] }[] = [
+  { key: 'location', words: ['ตามสถานที่', 'แยกสถานที่', 'รายสถานที่', 'by location'] },
+  { key: 'position', words: ['ตำแหน่ง', 'position', 'job title', 'jobtitle'] },
+  { key: 'department', words: ['แผนก', 'ฝ่าย', 'หน่วยงาน', 'department', 'dept'] }
+]
+
+/**
+ * คำไทย/คำย่อที่ผู้ใช้พิมพ์แทนชื่อแผนกในทะเบียน HR (ชื่อจริงเป็นอังกฤษ เช่น Production, QA/QC)
+ * ชื่อจริงทุกชื่อจับได้อยู่แล้วโดยไม่ต้องใส่ที่นี่ (เทียบทั้งคำ ไม่สนตัวพิมพ์เล็กใหญ่)
+ */
+const DEPARTMENT_ALIASES: Record<string, string[]> = {
+  IT: ['ไอที', 'ไอ ที', 'คอม', 'คอมพิวเตอร์'],
+  HR: ['บุคคล', 'ฝ่ายบุคคล', 'ทรัพยากรบุคคล', 'เอชอาร์'],
+  HSE: ['ความปลอดภัย', 'เซฟตี้', 'เซฟตี', 'safety', 'จป'],
+  'QA/QC': ['qa', 'qc', 'qaqc', 'qa qc', 'คิวซี', 'คุณภาพ'],
+  Production: ['ผลิต', 'ฝ่ายผลิต', 'โปรดักชั่น'],
+  Painting: ['สี', 'พ่นสี', 'ทาสี', 'paint'],
+  Scaffolding: ['นั่งร้าน', 'scaffold'],
+  Maintenance: ['ซ่อมบำรุง', 'ซ่อม', 'เมนเทนแนนซ์', 'mt'],
+  Administration: ['ธุรการ', 'admin'],
+  Warehouse: ['คลังสินค้า', 'คลัง'],
+  Store: ['สโตร์', 'สโตร'],
+  Procurement: ['จัดซื้อ', 'purchase', 'purchasing'],
+  Insulation: ['ฉนวน'],
+  Project: ['โครงการ'],
+  'Project Control': ['project control', 'คุมโครงการ'],
+  Management: ['ผู้บริหาร', 'บริหาร'],
+  Engineering: ['วิศวกรรม', 'วิศวกร'],
+  Civil: ['โยธา'],
+  Transportation: ['ขนส่ง'],
+  ผู้รับเหมา: ['ผรม', 'ผรม.', 'รับเหมา', 'contractor', 'subcontract'],
+  ไม่ระบุ: ['ไม่ระบุแผนก', 'ไม่มีแผนก']
+}
+
+/** คำไทยที่ผู้ใช้พิมพ์แทนชื่อตำแหน่งใน JOBTITLE (ใช้ต่อเมื่อมีคำว่า "ตำแหน่ง" ในข้อความ กันชนกับคำแผนก) */
+const POSITION_ALIASES: Record<string, string[]> = {
+  Welder: ['ช่างเชื่อม', 'เชื่อม'],
+  Foreman: ['โฟร์แมน', 'โฟแมน', 'หัวหน้างาน'],
+  Painter: ['ช่างสี', 'ช่างพ่นสี'],
+  Helper: ['ผู้ช่วยช่าง', 'คนงาน'],
+  Scaffolder: ['ช่างนั่งร้าน'],
+  Supervisor: ['ซุปเปอร์ไวเซอร์', 'หัวหน้า'],
+  Driver: ['คนขับ', 'คนขับรถ', 'พขร'],
+  Rigger: ['ริกเกอร์'],
+  'QC Inspector': ['ผู้ตรวจสอบคุณภาพ'],
+  'Safety Supervisor': ['จป.', 'เซฟตี้'],
+  'Fire Watch': ['ไฟร์วอช', 'เฝ้าไฟ'],
+  Engineer: ['วิศวกร'],
+  Flagman: ['คนโบกธง'],
+  ไม่ระบุ: ['ไม่ระบุตำแหน่ง', 'ไม่มีตำแหน่ง']
+}
+
+/** จับ "ทั้งคำ" สำหรับชื่ออังกฤษ ("it" ต้องไม่ไปตรงกับ "site") ส่วนภาษาไทยใช้ substring ตามปกติ */
+function containsWord(text: string, word: string): boolean {
+  const w = word.toLowerCase()
+  if (!/[a-z]/.test(w)) return text.includes(w)
+  return new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}($|[^a-z0-9])`).test(text)
+}
+
+/**
+ * หาแผนกที่ผู้ใช้ระบุจากข้อความ เทียบกับรายชื่อแผนกจริง (listDepartments ใน attendance.ts) และคำแทนใน DEPARTMENT_ALIASES
+ * ชื่อยาวก่อน ("Project Control" ก่อน "Project") คืน undefined เมื่อไม่ได้ระบุแผนก (เช่น "ตามแผนก" เฉย ๆ)
+ */
+export function detectDepartment(text: string, departments: string[]): string | undefined {
+  return matchName(normalize(text), departments, DEPARTMENT_ALIASES, true)?.name
+}
+
+/**
+ * หาตำแหน่งที่ผู้ใช้ระบุ (รายชื่อจาก listPositions ใน attendance.ts) ชื่ออังกฤษจับได้ทุกที่ในข้อความ
+ * ส่วนคำไทยใน POSITION_ALIASES ต้องมีคำว่า "ตำแหน่ง" กำกับ ("ช่างสี" จะได้ไม่ชนกับแผนก Painting)
+ */
+export function detectPosition(text: string, positions: string[]): string | undefined {
+  const t = normalize(text)
+  return matchName(t, positions, POSITION_ALIASES, /ตำแหน่ง|position/.test(t))?.name
+}
+
+/** จับชื่อจากรายชื่อ + คำแทน ชื่อยาวก่อน คืนชื่อจริงและคำที่จับได้ (เอาไว้ตัดออกจากข้อความก่อนหาชื่อชนิดอื่น) */
+function matchName(
+  t: string,
+  names: string[],
+  aliases: Record<string, string[]>,
+  allowAliases: boolean
+): { name: string; word: string } | undefined {
+  const candidates = names
+    .map((name) => ({ name, words: [name, ...(allowAliases ? (aliases[name] ?? []) : [])] }))
+    .sort((a, b) => b.name.length - a.name.length)
+  for (const c of candidates) {
+    const words = [...c.words].sort((a, b) => b.length - a.length)
+    const word = words.find((w) => containsWord(t, w))
+    if (word) return { name: c.name, word: word.toLowerCase() }
+  }
+  return undefined
+}
+
+export const GROUP_LABELS: Record<GroupBy, string> = {
+  location: 'ตามสถานที่',
+  department: 'ตามแผนก',
+  position: 'ตามตำแหน่ง'
+}
+
+/** ชื่อหน่วยของกลุ่ม ใช้ในประโยค เช่น "12 แผนก" */
+export const GROUP_UNITS: Record<GroupBy, string> = {
+  location: 'สถานที่',
+  department: 'แผนก',
+  position: 'ตำแหน่ง'
+}
 
 const PERIOD_WORDS: { key: PeriodKey; words: string[] }[] = [
   { key: 'lastWeek', words: ['อาทิตย์ที่แล้ว', 'สัปดาห์ที่แล้ว', 'อาทิตย์ก่อน', 'สัปดาห์ก่อน', 'last week', 'lastweek'] },
@@ -233,13 +358,37 @@ export function detectPeriod(text: string, today = todayLocal()): DatePeriod {
   return buildPeriod('today', today)
 }
 
+/** มุมมองการแยก (ค่าเริ่มต้น = ตามสถานที่) */
+export function detectGroupBy(text: string): GroupBy {
+  const t = normalize(text)
+  for (const g of GROUP_WORDS) {
+    if (g.words.some((w) => t.includes(w))) return g.key
+  }
+  return 'location'
+}
+
 /**
  * แปลงข้อความเป็นคำถาม - คืน null ถ้าไม่ใช่คำถามเรื่องการเข้างาน
- * ค่าเริ่มต้นเมื่อไม่ระบุ: วันนี้ + ทุกสถานที่
+ * ค่าเริ่มต้นเมื่อไม่ระบุ: วันนี้ + ทุกสถานที่ + แยกตามสถานที่
+ *   "สรุปพนักงาน วันนี้ ตามแผนก"            -> แยกตามแผนก ทุกสถานที่
+ *   "สรุปพนักงาน workshop ตามตำแหน่ง"       -> แยกตามตำแหน่ง เฉพาะ Workshop
  */
-export function parseAttendanceQuery(text: string, today = todayLocal()): AttendanceQuery | null {
+export function parseAttendanceQuery(
+  text: string,
+  today = todayLocal(),
+  options: { departments?: string[]; positions?: string[] } = {}
+): AttendanceQuery | null {
   const t = normalize(text)
-  if (!INTENT_WORDS.some((w) => t.includes(w))) return null
+  // ตัวกรองตำแหน่งก่อน แล้วตัดคำที่จับได้ออกก่อนหาแผนก ("ตำแหน่ง Safety Supervisor" จะได้ไม่กลายเป็นแผนก HSE)
+  const positionHit = t.includes('ทุกตำแหน่ง') ? undefined : matchName(t, options.positions ?? [], POSITION_ALIASES, /ตำแหน่ง|position/.test(t))
+  const rest = positionHit ? t.replace(positionHit.word, ' ') : t
+  const department = rest.includes('ทุกแผนก') ? undefined : detectDepartment(rest, options.departments ?? [])
+  const position = positionHit?.name
+
+  // "แผนก IT" / "ตำแหน่ง Foreman" ก็ถือเป็นคำถามเรื่องเข้างาน แม้ไม่มีคำว่าสรุปพนักงาน
+  const mentionsFilter =
+    (department !== undefined && /แผนก|department|dept/.test(t)) || (position !== undefined && /ตำแหน่ง|position/.test(t))
+  if (!mentionsFilter && !INTENT_WORDS.some((w) => t.includes(w))) return null
 
   let location: LocationFilter = 'all'
   for (const l of LOCATION_WORDS) {
@@ -249,5 +398,18 @@ export function parseAttendanceQuery(text: string, today = todayLocal()): Attend
     }
   }
 
-  return { period: detectPeriod(t, today), location }
+  // มุมมองที่ซ้ำกับตัวกรองไม่มีความหมาย: กรองแผนก -> ดูตำแหน่งในแผนก, กรองตำแหน่ง -> ดูว่าอยู่แผนกไหน,
+  // กรองทั้งคู่ -> ดูตามสถานที่ (ขอ "ตามสถานที่" ชัดเจนได้เสมอ)
+  let groupBy = detectGroupBy(t)
+  if (department !== undefined && position !== undefined && groupBy !== 'location') groupBy = 'location'
+  else if (department !== undefined && groupBy === 'department') groupBy = 'position'
+  else if (position !== undefined && groupBy === 'position') groupBy = 'department'
+
+  return {
+    period: detectPeriod(t, today),
+    location,
+    groupBy,
+    ...(department !== undefined ? { department } : {}),
+    ...(position !== undefined ? { position } : {})
+  }
 }

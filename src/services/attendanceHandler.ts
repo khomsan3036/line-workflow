@@ -1,4 +1,4 @@
-import { attendanceAvailable, getAttendanceSummary } from './attendance'
+import { attendanceAvailable, getAttendanceSummary, listDepartments, listPositions } from './attendance'
 import { attendanceAltText, attendanceQuickReply, flexAttendanceEmpty, flexAttendanceSummary } from './attendanceFlex'
 import { parseAttendanceQuery, todayLocal } from './attendanceQuery'
 import { replyAndLog, type SendResult } from './messaging'
@@ -37,7 +37,9 @@ const DB_ERROR_TEXT = [
 ].join('\n')
 
 export async function handleAttendanceQuestion(input: AttendanceReplyInput): Promise<AttendanceReplyResult | null> {
-  const query = parseAttendanceQuery(input.text)
+  // รายชื่อแผนกช่วยให้จับ "แผนก IT" ได้ (cache 10 นาที; ถ้าไม่มีฐาน HR ก็แค่ไม่กรองแผนก)
+  const [departments, positions] = attendanceAvailable() ? await Promise.all([listDepartments(), listPositions()]) : [[], []]
+  const query = parseAttendanceQuery(input.text, todayLocal(), { departments, positions })
   if (!query) return null
 
   const base = { replyToken: input.replyToken, targetType: input.targetType, targetId: input.targetId }
@@ -60,7 +62,11 @@ export async function handleAttendanceQuestion(input: AttendanceReplyInput): Pro
       quickReply: attendanceQuickReply(query),
       sentBy: 'attendance:summary'
     })
-    console.log(`[เข้างาน] ${query.period.label} / ${query.location} -> ${summary.totalPeople} คน (${result.status})`)
+    console.log(
+      `[เข้างาน] ${query.period.label} / ${query.location} / ${query.groupBy}${query.department ? ` / แผนก ${query.department}` : ''}${query.position ? ` / ตำแหน่ง ${query.position}` : ''} -> ${summary.totalPeople} คน${
+        query.groupBy === 'location' ? '' : ` (${summary.byGroup.length} กลุ่ม)`
+      } (${result.status})`
+    )
     return { result, summaryText: altText }
   } catch (err) {
     console.error('[เข้างาน] อ่านข้อมูลไม่สำเร็จ:', err instanceof Error ? err.message : err)

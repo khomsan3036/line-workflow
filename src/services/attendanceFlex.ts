@@ -1,9 +1,13 @@
-import type { AttendanceSummary, DayStat, LocationStat } from './attendance'
+import type { AttendanceSummary, DayStat, GroupStat, LocationStat } from './attendance'
+import { UNKNOWN_GROUP } from './attendance'
 import {
+  GROUP_LABELS,
+  GROUP_UNITS,
   LOCATION_LABELS,
   formatThaiDateShort,
   nowTimeLocal,
   type AttendanceQuery,
+  type GroupBy,
   type LocationFilter,
   type PeriodKey
 } from './attendanceQuery'
@@ -74,9 +78,38 @@ function locationPhrase(location: LocationFilter): string {
   return location === 'all' ? '' : ` ${location.toLowerCase()}`
 }
 
-function queryText(period: string, location: LocationFilter): string {
-  return `สรุปพนักงาน ${period}${locationPhrase(location)}`.trim()
+function groupPhrase(groupBy: GroupBy): string {
+  return groupBy === 'location' ? '' : ` ${GROUP_LABELS[groupBy]}`
 }
+
+/** ตัวกรองแผนก/ตำแหน่งของคำถาม ส่งต่อไปยังปุ่มและ quick reply เพื่อคงตัวกรองไว้ */
+type Filters = Pick<AttendanceQuery, 'department' | 'position'>
+
+function filterPhrase(f: Filters): string {
+  return `${f.department ? ` แผนก ${f.department}` : ''}${f.position ? ` ตำแหน่ง ${f.position}` : ''}`
+}
+
+/** ข้อความที่ parser (attendanceQuery.ts) อ่านกลับได้ เช่น "สรุปพนักงาน วันนี้ site แผนก IT ตามตำแหน่ง" */
+function queryText(period: string, location: LocationFilter, groupBy: GroupBy = 'location', filters: Filters = {}): string {
+  return `สรุปพนักงาน ${period}${locationPhrase(location)}${filterPhrase(filters)}${groupPhrase(groupBy)}`.trim()
+}
+
+/** ป้ายตัวกรองสั้น ๆ เช่น "แผนก IT · ตำแหน่ง Fitter A" (ว่างเมื่อไม่กรอง) */
+function filterLabel(f: Filters): string {
+  return [f.department ? `แผนก ${f.department}` : '', f.position ? `ตำแหน่ง ${f.position}` : ''].filter(Boolean).join(' · ')
+}
+
+/** บรรทัดรองใต้หัวการ์ด: ช่วงเวลา · แผนก/ตำแหน่ง (ถ้ากรอง) · มุมมอง (ถ้าไม่ใช่ตามสถานที่) */
+function subtitle(query: AttendanceQuery): string {
+  const parts = [query.period.label]
+  const f = filterLabel(query)
+  if (f) parts.push(f)
+  if (query.groupBy !== 'location') parts.push(GROUP_LABELS[query.groupBy])
+  return parts.join(' · ')
+}
+
+/** จำนวนแผนก/ตำแหน่งสูงสุดที่แสดงในการ์ด ที่เหลือรวมเป็น "อื่น ๆ" (การ์ดยาวเกินอ่านยากบนมือถือ) */
+const MAX_GROUP_ROWS = 10
 
 // ---------------------------------------------------------------------------
 // ชิ้นส่วนย่อย
@@ -156,7 +189,7 @@ function header(summary: AttendanceSummary) {
         ]
       },
       { type: 'text', text: 'พนักงานสแกนเข้างาน', size: 'lg', weight: 'bold', color: '#FFFFFF', wrap: true },
-      { type: 'text', text: query.period.label, size: 'xs', color: '#CBD5E1', wrap: true }
+      { type: 'text', text: subtitle(query), size: 'xs', color: '#CBD5E1', wrap: true }
     ]
   }
 }
@@ -174,7 +207,7 @@ function heroSingleDay(summary: AttendanceSummary) {
           { type: 'text', text: 'คน', size: 'md', color: MUTED, margin: 'sm', flex: 0 }
         ]
       },
-      { type: 'text', text: 'สแกนเข้างานแล้ว', size: 'sm', color: MUTED, margin: 'xs' },
+      { type: 'text', text: filterLabel(summary.query) ? `สแกนเข้างานแล้ว · ${filterLabel(summary.query)}` : 'สแกนเข้างานแล้ว', size: 'sm', color: MUTED, margin: 'xs', wrap: true },
       {
         type: 'box',
         layout: 'horizontal',
@@ -312,18 +345,101 @@ function dayRows(allDays: DayStat[], color: string, today: string) {
   })
 }
 
+/**
+ * แถวแผนก/ตำแหน่ง: ชื่อ (ตัดบรรทัดได้) + จำนวน + % + แถบสัดส่วน และบรรทัดย่อยบอก Workshop/Site หรือสแกนออก
+ * ใช้สีเดียวกับสถานที่ที่กรอง (ทุกสถานที่ = น้ำเงินเข้ม) ให้ต่างจากแถวสถานที่ที่ใช้เขียว/ฟ้า
+ */
+function groupRows(groups: GroupStat[], summary: AttendanceSummary) {
+  const { query } = summary
+  const total = summary.totalPeople
+  const color = query.location === 'all' ? NAVY_SOFT : locationColor(query.location)
+  const perDay = !query.period.single && summary.activeDays > 0
+  const shown = groups.slice(0, MAX_GROUP_ROWS)
+  const rest = groups.slice(MAX_GROUP_ROWS)
+
+  const rows: unknown[] = shown.map((g) => {
+    const unknown = g.name === UNKNOWN_GROUP
+    const value = perDay ? `${fmt(Math.round(g.people / summary.activeDays))} คน/วัน` : `${fmt(g.people)} คน`
+    const detail =
+      query.location === 'all'
+        ? Object.entries(g.byLocation)
+            .sort((a, b) => b[1] - a[1])
+            .map(([loc, n]) => `${loc} ${fmt(n)}`)
+            .join(' · ')
+        : `สแกนออกแล้ว ${fmt(g.checkedOut)} จาก ${fmt(g.people)}`
+    return {
+      type: 'box',
+      layout: 'vertical',
+      margin: 'md',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            { type: 'text', text: g.name, size: 'sm', color: unknown ? MUTED : INK, weight: 'bold', flex: 5, wrap: true, gravity: 'center' },
+            { type: 'text', text: value, size: 'sm', color: INK, weight: 'bold', align: 'end', flex: 3, gravity: 'center', wrap: true },
+            { type: 'text', text: `${pct(g.people, total)}%`, size: 'xs', color: MUTED, align: 'end', flex: 1, margin: 'sm', gravity: 'center' }
+          ]
+        },
+        bar(pct(g.people, total), unknown ? '#9CA3AF' : color),
+        { type: 'text', text: detail, size: 'xs', color: MUTED, margin: 'xs', wrap: true }
+      ]
+    }
+  })
+
+  if (rest.length > 0) {
+    const restPeople = rest.reduce((s, g) => s + g.people, 0)
+    const unit = GROUP_UNITS[query.groupBy]
+    rows.push({
+      type: 'text',
+      text: `อื่น ๆ อีก ${fmt(rest.length)} ${unit} · ${fmt(restPeople)} ${perDay ? 'คน-วัน' : 'คน'} (${pct(restPeople, total)}%)`,
+      size: 'xs',
+      color: MUTED,
+      margin: 'md',
+      wrap: true
+    })
+  }
+  return rows
+}
+
 const MY_ATTENDANCE_LABEL = 'เวลาเข้างานของฉัน'
 const MY_ATTENDANCE_TEXT = 'เวลาเข้างานของฉัน วันนี้'
 
+/** มุมมองที่ยังมีความหมายเมื่อมีตัวกรอง (กรองแผนกแล้วไม่ต้องแยกตามแผนกอีก ฯลฯ) */
+function availableViews(query: AttendanceQuery): GroupBy[] {
+  const all: GroupBy[] = ['location', 'department', 'position']
+  return all.filter((g) => !(g === 'department' && query.department) && !(g === 'position' && query.position))
+}
+
+/** ปุ่ม/quick reply ล้างตัวกรอง: ตัดตัวกรองนั้นออกแล้วกลับไปมุมมองแยกตามมิตินั้น */
+function clearFilterActions(query: AttendanceQuery): Array<{ label: string; text: string }> {
+  const period = periodPhrase(query)
+  const actions: Array<{ label: string; text: string }> = []
+  if (query.department) actions.push({ label: 'ทุกแผนก', text: queryText(period, query.location, 'department', { position: query.position }) })
+  if (query.position) actions.push({ label: 'ทุกตำแหน่ง', text: queryText(period, query.location, 'position', { department: query.department }) })
+  return actions
+}
+
+function secondaryButton(label: string, text: string, flex = 2) {
+  return {
+    type: 'button',
+    style: 'secondary',
+    height: 'sm',
+    color: '#F1F5F9',
+    flex,
+    action: { type: 'message', label, text }
+  }
+}
+
 function footerButtons(query: AttendanceQuery) {
-  // ปุ่มแรก = ดูเวลาเข้า-ออกของตัวเอง ตามด้วยช่วงเวลาอื่นของสรุปทั้งบริษัท
+  const period = periodPhrase(query)
+  // แถวบน: ปุ่มแรก = ดูเวลาเข้า-ออกของตัวเอง ตามด้วยช่วงเวลาอื่นของมุมมองเดิม
   const candidates: PeriodKey[] = ['today', 'yesterday', 'thisWeek', 'lastWeek']
   const others = candidates.filter((k) => k !== query.period.key).slice(0, 2)
-  return {
+  const top = {
     type: 'box',
     layout: 'horizontal',
     spacing: 'sm',
-    paddingAll: '12px',
     contents: [
       {
         type: 'button',
@@ -333,20 +449,23 @@ function footerButtons(query: AttendanceQuery) {
         flex: 3,
         action: { type: 'message', label: MY_ATTENDANCE_LABEL, text: MY_ATTENDANCE_TEXT }
       },
-      ...others.map((k) => ({
-        type: 'button',
-        style: 'secondary',
-        height: 'sm',
-        color: '#F1F5F9',
-        flex: 2,
-        action: {
-          type: 'message',
-          label: PERIOD_PHRASES[k],
-          text: queryText(PERIOD_PHRASES[k], query.location)
-        }
-      }))
+      ...others.map((k) => secondaryButton(PERIOD_PHRASES[k], queryText(PERIOD_PHRASES[k], query.location, query.groupBy, query)))
     ]
   }
+  // แถวล่าง: สลับมุมมอง ตามสถานที่ / ตามแผนก / ตามตำแหน่ง (ช่วงเวลาและสถานที่เดิม)
+  // มุมมองที่ซ้ำกับตัวกรองไม่แสดง แต่แทนด้วยปุ่มล้างตัวกรอง "ทุกแผนก" / "ทุกตำแหน่ง"
+  const views = availableViews(query)
+  const bottom = {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'sm',
+    margin: 'sm',
+    contents: [
+      ...views.filter((g) => g !== query.groupBy).map((g) => secondaryButton(GROUP_LABELS[g], queryText(period, query.location, g, query), 1)),
+      ...clearFilterActions(query).map((a) => secondaryButton(a.label, a.text, 1))
+    ]
+  }
+  return { type: 'box', layout: 'vertical', paddingAll: '12px', contents: [top, bottom] }
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +478,22 @@ export function flexAttendanceSummary(summary: AttendanceSummary, today: string)
   const single = query.period.single
   const body: unknown[] = [single ? heroSingleDay(summary) : heroRange(summary)]
 
-  if (query.location === 'all' && summary.byLocation.length > 0) {
+  if (query.groupBy !== 'location') {
+    // มุมมองแผนก/ตำแหน่ง: แสดงกลุ่มแทนสถานที่ (สถานที่ย่อยอยู่ในบรรทัดรองของแต่ละกลุ่ม) และไม่แสดงรายวันให้การ์ดสั้นพอ
+    const unit = GROUP_UNITS[query.groupBy]
+    const title =
+      query.department && query.groupBy === 'position'
+        ? `ตำแหน่งในแผนก ${query.department}`
+        : query.position && query.groupBy === 'department'
+          ? `แผนกของตำแหน่ง ${query.position}`
+          : GROUP_LABELS[query.groupBy]
+    body.push(sectionTitle(`${title} · ${fmt(summary.byGroup.length)} ${unit}${summary.byGroup.length > MAX_GROUP_ROWS ? ` (แสดง ${MAX_GROUP_ROWS} อันดับแรก)` : ''}`))
+    if (summary.byGroup.length > 0) {
+      body.push(...groupRows(summary.byGroup, summary))
+    } else {
+      body.push({ type: 'text', text: 'ไม่พบข้อมูลแผนก/ตำแหน่งของผู้ที่สแกน (ทะเบียนพนักงานยังไม่ซิงก์)', size: 'xs', color: MUTED, wrap: true, margin: 'sm' })
+    }
+  } else if (query.location === 'all' && summary.byLocation.length > 0) {
     body.push(sectionTitle('แยกตามสถานที่'))
     body.push(...locationRows(summary.byLocation, summary.totalPeople))
   } else if (query.location !== 'all' && single && summary.byLocation[0]) {
@@ -375,7 +509,7 @@ export function flexAttendanceSummary(summary: AttendanceSummary, today: string)
     })
   }
 
-  if (!single) {
+  if (!single && query.groupBy === 'location') {
     body.push(sectionTitle('รายวัน'))
     body.push(...dayRows(summary.days, query.location === 'all' ? NAVY_SOFT : locationColor(query.location), today))
   }
@@ -413,7 +547,7 @@ export function flexAttendanceEmpty(query: AttendanceQuery) {
       contents: [
         { type: 'text', text: 'สรุปการเข้างาน', size: 'xs', color: '#CBD5E1', weight: 'bold', wrap: true },
         { type: 'text', text: 'ยังไม่มีข้อมูลการสแกน', size: 'lg', weight: 'bold', color: '#FFFFFF', wrap: true },
-        { type: 'text', text: `${query.period.label} · ${LOCATION_LABELS[query.location]}`, size: 'xs', color: '#CBD5E1', wrap: true }
+        { type: 'text', text: `${subtitle(query)} · ${LOCATION_LABELS[query.location]}`, size: 'xs', color: '#CBD5E1', wrap: true }
       ]
     },
     body: {
@@ -439,12 +573,15 @@ export function flexAttendanceEmpty(query: AttendanceQuery) {
 
 /** ข้อความย่อสำหรับ notification / altText */
 export function attendanceAltText(summary: AttendanceSummary): string {
-  const where = summary.query.location === 'all' ? '' : ` (${summary.query.location})`
-  if (summary.query.period.single) {
-    return `พนักงานสแกนเข้างาน ${summary.query.period.label}${where}: ${fmt(summary.totalPeople)} คน`
+  const { query } = summary
+  const where = `${filterPhrase(query)}${query.location === 'all' ? '' : ` (${query.location})`}`
+  const grouped =
+    query.groupBy === 'location' ? '' : ` ${GROUP_LABELS[query.groupBy]} ${fmt(summary.byGroup.length)} ${GROUP_UNITS[query.groupBy]}`
+  if (query.period.single) {
+    return `พนักงานสแกนเข้างาน ${query.period.label}${where}: ${fmt(summary.totalPeople)} คน${grouped}`
   }
   const avg = summary.activeDays > 0 ? Math.round(summary.totalPeople / summary.activeDays) : 0
-  return `พนักงานเข้างาน ${summary.query.period.label}${where}: เฉลี่ย ${fmt(avg)} คน/วัน`
+  return `พนักงานเข้างาน ${query.period.label}${where}: เฉลี่ย ${fmt(avg)} คน/วัน${grouped}`
 }
 
 /** ปุ่มลัดใต้ช่องพิมพ์ ให้สลับสถานที่/ช่วงเวลาได้ทันที */
@@ -458,9 +595,17 @@ export function attendanceQuickReply(query: AttendanceQuery) {
       action: {
         type: 'message',
         label: `${l === 'all' ? 'ทุกที่' : LOCATION_LABELS[l]} · ${period}`.slice(0, 20),
-        text: queryText(period, l)
+        text: queryText(period, l, query.groupBy, query)
       }
     }))
+  // สลับมุมมอง (ช่วงเวลาและสถานที่เดิม) และปุ่มล้างตัวกรอง "ทุกแผนก" / "ทุกตำแหน่ง" เมื่อกรองอยู่
+  for (const g of availableViews(query)) {
+    if (g === query.groupBy) continue
+    items.push({ type: 'action', action: { type: 'message', label: GROUP_LABELS[g], text: queryText(period, query.location, g, query) } })
+  }
+  for (const a of clearFilterActions(query)) {
+    items.push({ type: 'action', action: { type: 'message', label: a.label, text: a.text } })
+  }
   // "เวลาเข้างานของฉัน" อยู่ก่อนช่วงเวลาอื่น ๆ (ก่อน "เมื่อวาน")
   items.push({ type: 'action', action: { type: 'message', label: MY_ATTENDANCE_LABEL, text: MY_ATTENDANCE_TEXT } })
   const periods: PeriodKey[] = ['today', 'yesterday', 'thisWeek', 'lastWeek', 'thisMonth']
@@ -468,7 +613,7 @@ export function attendanceQuickReply(query: AttendanceQuery) {
     if (k === query.period.key) continue
     items.push({
       type: 'action',
-      action: { type: 'message', label: PERIOD_PHRASES[k], text: queryText(PERIOD_PHRASES[k], query.location) }
+      action: { type: 'message', label: PERIOD_PHRASES[k], text: queryText(PERIOD_PHRASES[k], query.location, query.groupBy, query) }
     })
   }
   return { items: items.slice(0, 13) }

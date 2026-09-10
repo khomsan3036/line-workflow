@@ -21,7 +21,7 @@ const SQL_DIR = [
 
 const DROP_SQL = `
   DROP VIEW IF EXISTS v_messages_today, v_daily_sales;
-  DROP TABLE IF EXISTS line_messages, line_groups, message_logs, group_tasks, group_summaries, sales_orders, direct_messages, line_employee_links, line_login_states;
+  DROP TABLE IF EXISTS line_messages, line_groups, message_logs, group_tasks, group_summaries, sales_orders, direct_messages, line_employee_links, line_login_states, maintenance_alert_dedupe;
 `
 
 async function run(): Promise<void> {

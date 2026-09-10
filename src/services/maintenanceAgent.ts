@@ -200,7 +200,7 @@ async function executeTool(ctx: RunContext, name: string, input: unknown): Promi
   const args = injectRequestedBy(input, ctx.requestedBy)
   console.log(`[MT-bot] เรียก tool ${name} ${JSON.stringify(args).slice(0, 300)}`)
   const result = isLocalTool(name)
-    ? await callLocalTool(name, args, { requestedBy: ctx.requestedBy, displayName: ctx.req.displayName })
+    ? await callLocalTool(name, args, { requestedBy: ctx.requestedBy, displayName: ctx.req.displayName, groupId: ctx.req.groupId ?? null })
     : await callMaintenanceTool(name, args)
   ctx.toolsUsed.push(name)
   if (result.isError) console.warn(`[MT-bot] tool ${name} ตอบ error: ${result.text.slice(0, 300)}`)

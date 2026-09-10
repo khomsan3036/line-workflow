@@ -7,11 +7,18 @@ import { replyAndLog } from '../services/messaging'
 import { saveDirectMessage } from '../services/directMessages'
 import { handleAttendanceQuestion } from '../services/attendanceHandler'
 import { handleMyAttendance, replyVerifyOnFollow } from '../services/myAttendanceHandler'
-import { handleMaintenanceEvent } from '../services/maintenanceHandler'
+import {
+  addressedToBot,
+  answerMaintenanceMessage,
+  handleMaintenanceEvent,
+  maintenanceQuestionFromPostback,
+  type AddressedText
+} from '../services/maintenanceHandler'
 import { upsertGroup } from '../services/groups'
 import { recordGroupMessage } from '../services/groupMessages'
 import { handleUnsend } from '../services/unsend'
 import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
+import { MAINTENANCE_HINT_LINE, buildTopicHelp, resolveTopic, topicQuickReply } from '../services/topicRouter'
 
 // ---------------------------------------------------------------------------
 // ขาเข้า: รับ event จาก LINE Platform แล้วบันทึกข้อความในกลุ่มลง PostgreSQL
@@ -101,9 +108,16 @@ export function createWebhookRouter(): Router {
       }
       if (!config.maintenance.enabled && channel === 'mt') return
 
+      // ใช้ OA HR ร่วมกัน: ไม่มี OA MT แยก ทุก event (รวมที่หลงมาที่ /webhook/mt) ให้ handleEvent ของ HR
+      // ซึ่งส่งต่อคำถามซ่อมบำรุงให้แชทบอทเองอยู่แล้ว
+      if (config.maintenance.sharedOa && expected === 'mt') {
+        console.warn('[Webhook] ใช้ OA HR ร่วมกันอยู่ ควรตั้ง Webhook URL ใน LINE Developers Console เป็น /webhook (ไม่ใช่ /webhook/mt)')
+      }
+      const useHr = channel === 'hr' || config.maintenance.sharedOa
+
       const events = parsed.events ?? []
-      const handle = channel === 'hr' ? handleEvent : handleMaintenanceEvent
-      const tag = channel === 'hr' ? '[Webhook]' : '[Webhook MT]'
+      const handle = useHr ? handleEvent : handleMaintenanceEvent
+      const tag = useHr ? '[Webhook]' : '[Webhook MT]'
       for (const event of events) {
         try {
           await handle(event)
@@ -138,6 +152,9 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
         'สวัสดีครับ ผมคือบอทบันทึกบทสนทนาของทีม',
         'ผมจะเริ่มบันทึกข้อความในกลุ่มนี้ตั้งแต่ตอนนี้เป็นต้นไป เพื่อใช้สรุปประชุมและติดตามงาน',
         'ข้อความก่อนหน้านี้ผมมองไม่เห็นนะครับ',
+        ...(maintenanceInHrChat()
+          ? ['ถามผมได้ด้วยการพิมพ์ @ผู้ช่วย ตามด้วยคำถาม เรื่อง HR (สรุปพนักงาน) หรือซ่อมบำรุง (งานซ่อม น้ำมัน รถ)']
+          : []),
         'ถ้าไม่สะดวกให้บันทึก แจ้งผู้ดูแลเพื่อเชิญผมออกจากกลุ่มได้เลยครับ'
       ].join('\n'),
       sentBy: 'auto-reply:join'
@@ -184,6 +201,20 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
   // 5) ผู้ใช้กดปุ่ม Rich Menu ที่เป็น action ชนิด postback
   if (event.type === 'postback') {
     const reply = replyForPostback(event.postback.data)
+    // ใช้ OA ร่วมกัน: ปุ่มของฝั่งซ่อมบำรุง (data=q=<คำถาม>) ให้แชทบอทซ่อมบำรุงตอบ
+    const question = reply === null && maintenanceInHrChat() ? maintenanceQuestionFromPostback(event.postback.data) : null
+    if (question && event.source.userId) {
+      await answerMaintenanceMessage({
+        replyToken: event.replyToken,
+        userId: event.source.userId,
+        groupId: event.source.type === 'group' ? event.source.groupId : null,
+        text: question,
+        lineMessageId: `postback-${event.webhookEventId ?? event.timestamp}`,
+        timestamp: event.timestamp
+      })
+      console.log(`[Postback] data=${event.postback.data} -> ส่งให้แชทบอทซ่อมบำรุง`)
+      return
+    }
     await replyAndLog({
       replyToken: event.replyToken,
       targetId: event.source.userId,
@@ -206,7 +237,7 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     const userId = event.source.userId
     const text = event.message.type === 'text' ? event.message.text : null
 
-    // ลำดับการตอบ: เวลาเข้างานของฉัน -> สรุปพนักงานทั้งหมด -> เมนู -> fallback
+    // ลำดับการตอบ: เวลาเข้างานของฉัน -> สรุปพนักงานทั้งหมด -> เมนู -> แชทบอทซ่อมบำรุง (เมื่อใช้ OA ร่วมกัน) -> fallback
     let replyText: string | null = null
     let matched: boolean | null = null
 
@@ -231,16 +262,32 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
         console.log(`[แชท 1:1] "${text}" -> ตอบสรุปเข้างาน`)
       } else {
         const reply = replyForText(text)
-        replyText = reply ?? FALLBACK_TEXT
+        // ใช้ OA ร่วมกันและไม่ตรงเมนู: แยกหัวข้อ (คำนำหน้า "MT ..."/"HR ..." หรือคำหลัก) เรื่องซ่อม/น้ำมัน/รถ -> แชทบอทซ่อมบำรุง
+        // เรื่อง HR หรือไม่ชัด -> ข้อความแนะนำเมนู (fallback) พร้อม quick reply ทั้งสองหัวข้อให้เลือก
+        const resolved = reply === null && maintenanceInHrChat() ? resolveTopic({ text }) : null
+        if (resolved?.topic === 'maintenance') {
+          // (แชทบอทตอบและบันทึก direct_messages เองแล้ว)
+          console.log(`[แชท 1:1] "${text}" -> ส่งให้แชทบอทซ่อมบำรุง`)
+          await answerMaintenanceMessage({
+            replyToken: event.replyToken,
+            userId,
+            groupId: null,
+            text: resolved.text || text,
+            lineMessageId: event.message.id,
+            timestamp: event.timestamp
+          })
+          return
+        }
+        replyText = reply ?? fallbackText()
         matched = reply !== null
         await replyAndLog({
           replyToken: event.replyToken,
           targetId: userId,
           text: replyText,
-          quickReply: SHORTCUT_QUICK_REPLY,
+          quickReply: maintenanceInHrChat() ? topicQuickReply({ inGroup: false }) : SHORTCUT_QUICK_REPLY,
           sentBy: reply ? 'auto-reply:menu' : 'auto-reply:fallback'
         })
-        console.log(`[แชท 1:1] "${text}"${reply ? ' -> ตอบตามเมนู' : ' -> ตอบ fallback'}`)
+        console.log(`[แชท 1:1] "${text}"${reply ? ' -> ตอบตามเมนู' : ` -> ตอบ fallback (หัวข้อ: ${resolved?.topic ?? 'hr'})`}`)
       }
     }
 
@@ -271,8 +318,102 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
       targetType: 'group',
       targetId: groupId
     })
-    if (attendance) console.log(`[กลุ่ม] "${messageText}" -> ตอบสรุปเข้างาน`)
+    if (attendance) {
+      console.log(`[กลุ่ม] "${messageText}" -> ตอบสรุปเข้างาน`)
+      return
+    }
+
+    // ใช้ OA ร่วมกัน (บอทตัวเดียวในกลุ่มตอบหลายเรื่อง): ตอบเมื่อมีคน @บอท แล้วแยกหัวข้อ HR / ซ่อมบำรุง จากข้อความ
+    // ไม่ชัดว่าเรื่องอะไร -> ไม่เดา แต่ถามกลับพร้อม quick reply ให้เลือก (ดู answerAddressedGroupMessage)
+    if (maintenanceInHrChat() && event.message.type === 'text' && event.source.userId) {
+      const addressed = await addressedToBot(event.message)
+      if (addressed === null) return
+      await answerAddressedGroupMessage({
+        replyToken: event.replyToken,
+        userId: event.source.userId,
+        groupId,
+        addressed,
+        lineMessageId: event.message.id,
+        timestamp: event.timestamp
+      })
+    }
   }
+}
+
+/**
+ * ข้อความในกลุ่มที่พูดกับบอท (โหมด OA เดียว) แยกหัวข้อแล้วส่งต่อ
+ *   ซ่อมบำรุง (@MT / คำนำหน้า MT / คำหลักเรื่องซ่อม น้ำมัน รถ) -> แชทบอทซ่อมบำรุง
+ *   HR (@HR / คำนำหน้า HR / คำหลักเรื่องบุคคล)                 -> สรุปเข้างาน หรือคำตอบตามเมนู HR; ไม่มีคำตอบ -> แนะนำเรื่อง HR ที่ถามได้
+ *   ไม่ชัด                                                    -> ข้อความแนะนำทั้งสองหัวข้อ + quick reply ให้เลือก
+ * เพิ่มหัวข้อใหม่: เพิ่มใน TOPICS (services/topicRouter.ts) แล้วเพิ่มกิ่งในฟังก์ชันนี้
+ */
+async function answerAddressedGroupMessage(params: {
+  replyToken: string
+  userId: string
+  groupId: string
+  addressed: AddressedText
+  lineMessageId: string
+  timestamp: number
+}): Promise<void> {
+  const { replyToken, userId, groupId, addressed } = params
+  const { topic, text: question } = resolveTopic(addressed)
+  const shown = `@${addressed.alias ?? 'บอท'} ${question}`.trim()
+
+  if (topic === 'maintenance') {
+    console.log(`[กลุ่ม] "${shown}" -> ส่งให้แชทบอทซ่อมบำรุง`)
+    await answerMaintenanceMessage({
+      replyToken,
+      userId,
+      groupId,
+      text: question || 'สรุปภาพรวมวันนี้',
+      lineMessageId: params.lineMessageId,
+      timestamp: params.timestamp
+    })
+    return
+  }
+
+  if (topic === 'hr' && question !== '') {
+    const attendance = await handleAttendanceQuestion({ text: question, replyToken, targetType: 'group', targetId: groupId })
+    if (attendance) {
+      console.log(`[กลุ่ม] "${shown}" -> ตอบสรุปเข้างาน`)
+      return
+    }
+    const menu = replyForText(question)
+    if (menu) {
+      await replyAndLog({
+        replyToken,
+        targetType: 'group',
+        targetId: groupId,
+        text: menu,
+        quickReply: topicQuickReply({ inGroup: true, topic: 'hr' }),
+        sentBy: 'auto-reply:menu'
+      })
+      console.log(`[กลุ่ม] "${shown}" -> ตอบตามเมนู`)
+      return
+    }
+  }
+
+  // ไม่ชัดว่าเรื่องอะไร หรือเรื่อง HR ที่ยังไม่มีฟีเจอร์ตอบ -> แนะนำสิ่งที่ถามได้ + quick reply (กดแล้วส่ง "@ผู้ช่วย ..." กลับมา)
+  const help = buildTopicHelp({ inGroup: true, topic: topic === 'hr' ? 'hr' : undefined })
+  await replyAndLog({
+    replyToken,
+    targetType: 'group',
+    targetId: groupId,
+    text: help.text,
+    quickReply: help.quickReply,
+    sentBy: topic === 'hr' ? 'auto-reply:topic-help:hr' : 'auto-reply:topic-help'
+  })
+  console.log(`[กลุ่ม] "${shown}" -> ${topic === 'hr' ? 'แนะนำเรื่อง HR ที่ถามได้' : 'ถามกลับว่าเรื่อง HR หรือซ่อมบำรุง'}`)
+}
+
+/** แชทบอทซ่อมบำรุงตอบผ่าน OA HR หรือไม่ (โหมดใช้ OA ตัวเดียว) */
+function maintenanceInHrChat(): boolean {
+  return config.maintenance.enabled && config.maintenance.sharedOa
+}
+
+/** ข้อความแนะนำเมนูเมื่อไม่เข้าใจ: โหมด OA เดียวเพิ่มบรรทัดบอกว่าถามเรื่องซ่อมบำรุงได้ด้วย */
+function fallbackText(): string {
+  return maintenanceInHrChat() ? `${FALLBACK_TEXT}\n${MAINTENANCE_HINT_LINE}` : FALLBACK_TEXT
 }
 
 // admin.ts (ปุ่ม "สร้างข้อความทดสอบ") ยัง import จากที่นี่

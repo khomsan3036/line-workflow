@@ -1,5 +1,6 @@
 import { config } from '../config'
 import { listActiveGroups } from '../services/groups'
+import { listMaintenanceGroups } from '../services/maintenanceLocalTools'
 import { answerMaintenanceQuestion } from '../services/maintenanceAgent'
 import { buildMaintenanceCard, cardToText, type MaintenanceCard } from '../services/maintenanceFlex'
 import { sendAndLog } from '../services/messaging'
@@ -12,7 +13,7 @@ import { sendAndLog } from '../services/messaging'
 //
 // ใช้แชทบอทตัวเดียวกับที่ตอบในแชท (โมเดล + MCP tool) จึงได้การ์ดหน้าตาเดียวกันและตัวเลขจากระบบจริง
 // ต่างกันแค่ผู้ถามคือ "scheduler" และหัวเรื่องถูกกำหนดตายตัวให้จำง่าย
-// ปลายทาง: MT_REPORT_GROUP_IDS (C... กลุ่ม / U... ผู้ใช้ไว้ทดสอบ) ว่าง = ทุกกลุ่มที่บอท MT อยู่
+// ปลายทาง: MT_REPORT_GROUP_IDS (C... กลุ่ม / U... ผู้ใช้ไว้ทดสอบ) ว่าง = กลุ่มของทีมซ่อมบำรุง (listMaintenanceGroups)
 // ส่วน "สรุปประชุมกลุ่มวันนี้" ของกลุ่ม MT ใช้งาน SUMMARY_CRON เดียวกับ OA HR (ส่งด้วย OA ของกลุ่มนั้นเอง)
 // ---------------------------------------------------------------------------
 
@@ -64,13 +65,13 @@ export interface MaintenanceReportOutcome {
   sendStatus: 'sent' | 'mock' | 'dry-run' | 'failed' | 'partial' | 'skipped' | 'no-target' | 'agent-failed' | 'disabled'
 }
 
-/** ปลายทางที่ตั้งไว้ (MT_REPORT_GROUP_IDS) หรือทุกกลุ่มที่บอท MT อยู่ */
+/** ปลายทางที่ตั้งไว้ (MT_REPORT_GROUP_IDS) หรือกลุ่มของทีมซ่อมบำรุง (listMaintenanceGroups: MT_ALERT_GROUP_IDS / ชื่อกลุ่มมีคำว่า MT) */
 export async function configuredMaintenanceTargets(): Promise<Array<{ id: string; name: string }>> {
   if (config.scheduler.mtReportTargets.length > 0) {
-    const groups = await listActiveGroups('mt')
+    const groups = await listActiveGroups(config.maintenance.channel)
     return config.scheduler.mtReportTargets.map((id) => ({ id, name: groups.find((g) => g.group_id === id)?.group_name ?? id }))
   }
-  return (await listActiveGroups('mt')).map((g) => ({ id: g.group_id, name: g.group_name ?? g.group_id }))
+  return (await listMaintenanceGroups()).map((g) => ({ id: g.group_id, name: g.group_name ?? g.group_id }))
 }
 
 export async function runMaintenanceReport(options: MaintenanceReportOptions): Promise<MaintenanceReportOutcome> {
@@ -120,7 +121,7 @@ export async function runMaintenanceReport(options: MaintenanceReportOptions): P
       contents: card ? buildMaintenanceCard(card) : undefined,
       sentBy,
       dryRun,
-      channel: 'mt'
+      channel: config.maintenance.channel
     })
     results.push({ id: t.id, name: t.name, status: result.status, error: result.error })
   }

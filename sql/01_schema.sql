@@ -307,3 +307,15 @@ CREATE TABLE IF NOT EXISTS line_login_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_login_states_user ON line_login_states (line_user_id, created_at DESC);
+
+-- --------------------------------------------------------------------------
+-- 13) maintenance_alert_dedupe : กันการ์ดแจ้งเตือนซ่อมบำรุงซ้ำ (consumer ของ RabbitMQ ใน services/maintenanceEvents.ts)
+--     MCP server ของระบบซ่อมบำรุง publish alert เดิมซ้ำทุกครั้งที่มีคนถาม (tool Get* แจ้งเตือนอัตโนมัติ กันซ้ำฝั่งนั้นแค่ 60 นาที
+--     และอยู่ในหน่วยความจำ) จึงจำคีย์ตามเนื้อหา (alertId / เลขที่คำขอ) ไว้ใน DB ให้รอดข้าม restart และใช้ร่วมกันหลาย instance
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS maintenance_alert_dedupe (
+    dedupe_key     VARCHAR(200) PRIMARY KEY,               -- เช่น alert:<alertId> / booking:<bookingId> / fuel:<requestNo>
+    first_sent_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),    -- ครั้งล่าสุดที่ส่งจริง (รีเซ็ตเมื่อพ้นช่วงกันซ้ำแล้วส่งใหม่)
+    last_seen_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),    -- ครั้งล่าสุดที่เห็น event นี้ (รวมที่ถูกข้าม)
+    hits           INTEGER      NOT NULL DEFAULT 0         -- จำนวนครั้งที่ถูกข้ามเพราะซ้ำ
+);

@@ -16,6 +16,7 @@ import { handleUnsend } from './unsend'
 import { answerMaintenanceQuestion } from './maintenanceAgent'
 import { buildMaintenanceCard, buildQuickReply, buildWelcomeCard, type AgentReply } from './maintenanceFlex'
 import { replyAndLog, sendAndLog } from './messaging'
+import { botAliases } from './topicRouter'
 
 // ---------------------------------------------------------------------------
 // webhook ของ OA ทีมซ่อมบำรุง (Maintenance Team) - POST /webhook/mt
@@ -23,9 +24,13 @@ import { replyAndLog, sendAndLog } from './messaging'
 //   - ในกลุ่ม: บันทึกทุกข้อความลง line_messages และเก็บไฟล์สื่อลง media_files (เหมือน OA HR)
 //     แต่ตอบเฉพาะเมื่อมีคน mention บอท (กันรบกวนแชทปกติ)
 //   - บันทึกคู่ถาม-ตอบลง direct_messages (channel = mt) เพื่อคุยต่อเนื่องและดูย้อนหลังใน dashboard
+//
+// โหมดใช้ OA HR ร่วมกัน (config.maintenance.sharedOa): ไม่มี /webhook/mt ให้ใช้ handleEvent ของ HR
+// (routes/webhook.ts) เรียก answerMaintenanceMessage / maintenanceAddressedText จากไฟล์นี้แทน
+// และทุกอย่างบันทึก/ส่งด้วย channel 'hr' (CHANNEL ด้านล่างอ่านจาก config)
 // ---------------------------------------------------------------------------
 
-const CHANNEL = 'mt' as const
+const CHANNEL = config.maintenance.channel
 
 export const MT_WELCOME_TEXT = 'สวัสดีครับ ผมคือผู้ช่วยทีมซ่อมบำรุง QTEC ถามเรื่องงานซ่อม น้ำมัน และรถได้เลยครับ'
 
@@ -82,45 +87,67 @@ async function deliver(params: {
  * ปัญหาที่พบจริง: OA ชื่อ "MT Notification" แต่การ์ดต้อนรับบอกให้พิมพ์ "@ผู้ช่วย" ซึ่ง LINE ไม่รู้จัก
  * ข้อความจึงมาแบบไม่มี mention object และบอทเงียบ -> ต้องรับแบบข้อความด้วย
  */
-const BOT_ALIASES = ['ผู้ช่วย', 'บอท', 'mt notification', 'mt', 'maintenance', 'ซ่อมบำรุง']
+/** ชื่อที่ OA MT แยกตอบรับ (ชื่อกลาง + ชื่อของหัวข้อซ่อมบำรุง) โหมด OA เดียวใช้ botAliases() ทุกหัวข้อ ดู addressedToBot */
+const MT_BOT_ALIASES = botAliases(['maintenance'])
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** ข้อความที่ส่งถึงบอท: text = คำถามที่ตัดชื่อบอทออกแล้ว, alias = ชื่อที่พิมพ์หลัง @ (ตัวพิมพ์เล็ก) หรือ null เมื่อเป็น mention จริง */
+export interface AddressedText {
+  text: string
+  alias: string | null
+}
+
 /**
  * ข้อความในกลุ่มที่พูดกับบอทหรือไม่ และตัดส่วนที่เรียกชื่อบอทออก (คืน null = ไม่ได้พูดกับบอท)
  *   1) mention จริงของ LINE (เลือกชื่อบอทจากรายการ @) -> mentionees[].isSelf หรือ userId ตรงกับบอท
- *   2) พิมพ์ "@ผู้ช่วย ..." / "@MT Notification ..." เป็นตัวอักษรธรรมดาไว้ต้นข้อความ
+ *   2) พิมพ์ "@ผู้ช่วย ..." / "@MT ..." / "@HR ..." เป็นตัวอักษรธรรมดาไว้ต้นข้อความ (aliases = ชื่อที่รับ)
+ * ข้อความที่ขึ้นต้นด้วย mention จริงของคนอื่น (เช่นสมาชิกชื่อ "HR") ไม่ถือว่าพูดกับบอท
  */
-export function extractAddressedText(
+export function extractAddressed(
   message: { text: string; mention?: unknown },
-  bot: { userId?: string; displayName?: string } | null
-): string | null {
+  bot: { userId?: string; displayName?: string } | null,
+  aliases: string[] = botAliases()
+): AddressedText | null {
   const mention = message.mention as
     | { mentionees?: Array<{ index: number; length: number; isSelf?: boolean; type?: string; userId?: string }> }
     | undefined
-  const self =
-    mention?.mentionees?.filter((m) => m.isSelf || (bot?.userId !== undefined && m.userId === bot.userId)) ?? []
+  const mentionees = mention?.mentionees ?? []
+  const isSelf = (m: { isSelf?: boolean; userId?: string }): boolean =>
+    m.isSelf === true || (bot?.userId !== undefined && m.userId === bot.userId)
+  const self = mentionees.filter(isSelf)
   if (self.length > 0) {
     let text = message.text
     // ตัดจากท้ายก่อน เพื่อให้ index ที่เหลือยังถูกต้อง
     for (const m of [...self].sort((a, b) => b.index - a.index)) {
       text = text.slice(0, m.index) + text.slice(m.index + m.length)
     }
-    return text.replace(/\s+/g, ' ').trim()
+    return { text: text.replace(/\s+/g, ' ').trim(), alias: null }
   }
+  if (mentionees.some((m) => !isSelf(m) && m.index === 0)) return null
 
-  const names = [...BOT_ALIASES, ...(bot?.displayName ? [bot.displayName] : [])]
+  const names = [...aliases, ...(bot?.displayName ? [bot.displayName] : [])]
     .map((n) => n.trim())
     .filter(Boolean)
     // ชื่อยาวก่อน ไม่ให้ "mt" ไปตัด "mt notification" ครึ่งเดียว
     .sort((a, b) => b.length - a.length)
     .map(escapeRegExp)
     .join('|')
-  const re = new RegExp(`^\\s*@\\s*(?:${names})\\s*[:,]?\\s*(.*)$`, 'is')
+  const re = new RegExp(`^\\s*@\\s*(${names})\\s*[:,]?\\s*(.*)$`, 'is')
   const match = re.exec(message.text)
-  return match ? match[1].trim() : null
+  return match ? { text: match[2].trim(), alias: match[1].trim().toLowerCase() } : null
+}
+
+/** เหมือน extractAddressed แต่คืนเฉพาะคำถาม (null = ไม่ได้พูดกับบอท) */
+export function extractAddressedText(
+  message: { text: string; mention?: unknown },
+  bot: { userId?: string; displayName?: string } | null,
+  aliases: string[] = botAliases()
+): string | null {
+  const addressed = extractAddressed(message, bot, aliases)
+  return addressed ? addressed.text : null
 }
 
 export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void> {
@@ -174,11 +201,10 @@ export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void>
 
   // 3) postback จาก Rich Menu: data=q=<คำถาม> ให้ถือเป็นคำถาม
   if (event.type === 'postback') {
-    const params = new URLSearchParams(event.postback.data)
-    const question = params.get('q')
+    const question = maintenanceQuestionFromPostback(event.postback.data)
     const userId = event.source.userId
     if (!question || !userId) return
-    await answerAndReply({
+    await answerMaintenanceMessage({
       replyToken: event.replyToken,
       userId,
       groupId: event.source.type === 'group' ? event.source.groupId : null,
@@ -227,7 +253,7 @@ export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void>
       })
       return
     }
-    await answerAndReply({
+    await answerMaintenanceMessage({
       replyToken: event.replyToken,
       userId,
       groupId: null,
@@ -240,9 +266,9 @@ export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void>
 
   // 6) ในกลุ่ม: ตอบเฉพาะเมื่อถูก mention (กันรบกวนแชทปกติ)
   if (event.source.type === 'group' && event.message.type === 'text') {
-    const text = extractAddressedText(event.message, await getBotInfo(CHANNEL))
+    const text = await maintenanceAddressedText(event.message)
     if (text === null) return
-    await answerAndReply({
+    await answerMaintenanceMessage({
       replyToken: event.replyToken,
       userId,
       groupId: event.source.groupId,
@@ -253,7 +279,34 @@ export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void>
   }
 }
 
-async function answerAndReply(params: {
+/**
+ * ข้อความในกลุ่มนี้พูดกับบอทหรือไม่ (mention จริงหรือพิมพ์ @ชื่อ) คืนคำถามที่ตัดชื่อบอทออกแล้ว, null = ไม่ได้พูดกับบอท
+ * ค่าว่าง = เรียกบอทเฉย ๆ ไม่มีคำถาม (ผู้เรียกใช้ค่าเริ่มต้น "สรุปภาพรวมวันนี้")
+ */
+export async function maintenanceAddressedText(message: { text: string; mention?: unknown }): Promise<string | null> {
+  return extractAddressedText(message, await getBotInfo(CHANNEL), MT_BOT_ALIASES)
+}
+
+/**
+ * โหมด OA เดียว (บอทตัวเดียวในกลุ่มตอบทั้ง HR และซ่อมบำรุง): ข้อความพูดกับบอทหรือไม่ รับทุกชื่อ (@ผู้ช่วย @HR @MT ...)
+ * คืนคำถาม + ชื่อที่เรียก ให้ routes/webhook.ts เอาไปแยกหัวข้อด้วย resolveTopic
+ */
+export async function addressedToBot(message: { text: string; mention?: unknown }): Promise<AddressedText | null> {
+  return extractAddressed(message, await getBotInfo(CHANNEL))
+}
+
+/** คำถามที่พิมพ์เข้ามาโดยตรงจาก postback ของ Rich Menu (data=q=<คำถาม>) ถ้าไม่ใช่รูปแบบนี้คืน null */
+export function maintenanceQuestionFromPostback(data: string): string | null {
+  if (!data.includes('=')) return null
+  const question = new URLSearchParams(data).get('q')
+  return question && question.trim() !== '' ? question.trim() : null
+}
+
+/**
+ * ถามแชทบอทซ่อมบำรุงแล้วตอบกลับ (reply ก่อน หมดอายุค่อย push) พร้อมบันทึกคู่ถาม-ตอบลง direct_messages
+ * ใช้ทั้งจาก handleMaintenanceEvent (OA MT แยก) และจาก handleEvent ของ HR เมื่อใช้ OA ร่วมกัน
+ */
+export async function answerMaintenanceMessage(params: {
   replyToken: string
   userId: string
   groupId: string | null

@@ -6,6 +6,14 @@ import 'dotenv/config'
 // แม้ยังไม่ได้ตั้งค่า LINE (ระบบจะทำงานในโหมด MOCK ให้อัตโนมัติ)
 // ---------------------------------------------------------------------------
 
+/** ค่าคั่นด้วยจุลภาค -> array (ตัดช่องว่างและค่าว่างออก) */
+function list(v: string | undefined): string[] {
+  return (v ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback
   return value.toLowerCase() === 'true' || value === '1'
@@ -16,8 +24,16 @@ const channelAccessToken = process.env.CHANNEL_ACCESS_TOKEN_HR ?? process.env.CH
 const channelSecret = process.env.CHANNEL_SECRET_HR ?? process.env.CHANNEL_SECRET ?? ''
 
 // LINE OA ที่สอง (Maintenance Team) - แชทบอทถาม-ตอบข้อมูลซ่อมบำรุงผ่าน MCP server
-const maintenanceChannelAccessToken = process.env.CHANNEL_ACCESS_TOKEN_MT ?? ''
-const maintenanceChannelSecret = process.env.CHANNEL_SECRET_MT ?? ''
+const maintenanceTokenRaw = (process.env.CHANNEL_ACCESS_TOKEN_MT ?? '').trim()
+const maintenanceSecretRaw = (process.env.CHANNEL_SECRET_MT ?? '').trim()
+// ใช้ OA HR ตัวเดียวทำทั้งงาน HR และแชทบอทซ่อมบำรุง (ไม่มี OA MT แยก):
+//   ตั้ง MAINTENANCE_USE_HR_OA=true หรือใส่ CHANNEL_ACCESS_TOKEN_MT เป็นค่าเดียวกับของ HR ก็ได้
+// ในโหมดนี้ทุกอย่างของฝั่ง MT (ส่งข้อความ, ทะเบียนกลุ่ม, ประวัติแชท) ใช้ channel 'hr' และ webhook อยู่ที่ /webhook
+const maintenanceUseHrOa =
+  bool(process.env.MAINTENANCE_USE_HR_OA, false) ||
+  (maintenanceTokenRaw !== '' && maintenanceTokenRaw === channelAccessToken.trim())
+const maintenanceChannelAccessToken = maintenanceUseHrOa ? channelAccessToken : maintenanceTokenRaw
+const maintenanceChannelSecret = maintenanceUseHrOa ? channelSecret : maintenanceSecretRaw
 
 // ถ้าไม่ได้ตั้ง token ไว้ ให้บังคับเป็นโหมด mock เสมอ (ยิง API จริงไม่ได้อยู่ดี)
 const mockLineFlag = bool(process.env.MOCK_LINE, true)
@@ -121,6 +137,10 @@ export const config = {
   maintenance: {
     channelAccessToken: maintenanceChannelAccessToken,
     channelSecret: maintenanceChannelSecret,
+    // true = ไม่มี OA MT แยก ใช้ OA HR ตอบแชทซ่อมบำรุงด้วย (ดูคำอธิบายที่ maintenanceUseHrOa)
+    sharedOa: maintenanceUseHrOa,
+    // channel ที่ใช้ส่งข้อความ/ลงทะเบียนกลุ่ม/เก็บประวัติของฝั่งซ่อมบำรุง ('mt' เมื่อมี OA แยก, 'hr' เมื่อใช้ร่วม)
+    channel: (maintenanceUseHrOa ? 'hr' : 'mt') as 'hr' | 'mt',
     // โหมด mock ของ OA นี้: ตาม MOCK_LINE หรือเมื่อยังไม่ได้ใส่ token
     mockLine: mockLineFlag || maintenanceChannelAccessToken === '',
     mcpUrl: stripSlash((process.env.MAINTENANCE_MCP_URL ?? 'https://qtecintegra.com/maintenance/mcp').trim()),
@@ -169,12 +189,26 @@ export const config = {
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean),
+      // กันการ์ดซ้ำตามเนื้อหา (alertId / เลขที่คำขอ) ภายในกี่ชั่วโมง จำไว้ในตาราง maintenance_alert_dedupe (0 = ปิด)
+      // ทำไมต้องมี: tool Get* ของ MCP server publish alert เดิมซ้ำทุกครั้งที่มีคนถาม (ฝั่งนั้นกันซ้ำแค่ 60 นาทีในหน่วยความจำ)
+      dedupeHours: Number(process.env.MAINTENANCE_EVENT_DEDUPE_HOURS ?? 24),
+      // ข้าม alert อัตโนมัติที่เกิดจากคำถามของแอปนี้เอง (แชทบอท/ตัวตั้งเวลา) เพราะผู้ถามได้การ์ดคำตอบอยู่แล้ว
+      skipOwnAnalysisAlerts: bool(process.env.MAINTENANCE_EVENT_SKIP_OWN_ANALYSIS, true),
       get enabled(): boolean {
         return this.url !== ''
       }
     },
+    // -------------------------------------------------------------------
+    // กลุ่มปลายทางของการ์ดแจ้งเตือน MT (notify_line_group จากแชท + event จาก RabbitMQ)
+    //   alertGroupIds : MT_ALERT_GROUP_IDS ระบุ groupId ตรง ๆ (ไม่ผูกกับ MT_REPORT_GROUP_IDS ซึ่งเป็นปลายทางทดสอบของรายงานเท่านั้น)
+    //   groupKeywords : เมื่อไม่ได้ระบุ id ให้เลือกเฉพาะกลุ่มที่ชื่อมีคำเหล่านี้ (ค่าเริ่มต้น MT / ซ่อมบำรุง / maintenance)
+    // ทำไมต้องมี: บอทถูกเชิญเข้ากลุ่มอื่นที่ไม่ใช่ทีมช่างได้ (และในโหมดใช้ OA HR ร่วมกัน ทะเบียนกลุ่ม channel = hr
+    // มีทั้งกลุ่ม HR และกลุ่มช่าง) ถ้าส่ง "ทุกกลุ่มที่บอทอยู่" การ์ดซ่อมบำรุงจะไปรบกวนกลุ่มเหล่านั้น จึงไม่มีการถอยไปส่งทุกกลุ่ม
+    // -------------------------------------------------------------------
+    alertGroupIds: list(process.env.MT_ALERT_GROUP_IDS),
+    groupKeywords: list(process.env.MT_GROUP_KEYWORDS ?? 'MT,ซ่อมบำรุง,maintenance'),
     get enabled(): boolean {
-      return this.channelSecret !== '' || this.channelAccessToken !== ''
+      return this.sharedOa || this.channelSecret !== '' || this.channelAccessToken !== ''
     }
   },
 
@@ -250,7 +284,7 @@ export const config = {
     //   MT_URGENT_CRON  = การ์ด "แจ้งเตือนงานซ่อมเร่งด่วน" ส่งเฉพาะเมื่อมีเรื่องด่วน (ว่าง = ปิด)
     mtPendingCron: (process.env.MT_PENDING_CRON ?? '30 8 * * *').trim(),
     mtUrgentCron: (process.env.MT_URGENT_CRON ?? '0 10,14 * * *').trim(),
-    // ปลายทางของการ์ด MT คั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ทุกกลุ่มที่บอท MT อยู่
+    // ปลายทางของการ์ด MT คั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = กลุ่มของทีมซ่อมบำรุง (listMaintenanceGroups)
     mtReportTargets: (process.env.MT_REPORT_GROUP_IDS ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -321,13 +355,20 @@ export function describeConfig(): string {
     `Channel secret : ${config.channelSecret ? 'ตั้งค่าแล้ว (ตรวจ signature)' : 'ยังไม่ตั้ง (webhook จะข้ามการตรวจ signature)'}`,
     `Maintenance OA : ${
       config.maintenance.enabled
-        ? `เปิด (/webhook/mt, ${config.maintenance.mockLine ? 'MOCK' : 'LIVE'}, MCP ${config.maintenance.mcpUrl}, โมเดล ${maintenanceModelLabel()})`
-        : 'ยังไม่ตั้ง CHANNEL_ACCESS_TOKEN_MT/CHANNEL_SECRET_MT'
+        ? `เปิด (${
+            config.maintenance.sharedOa ? 'ใช้ OA HR ร่วมกัน ตอบที่ /webhook' : '/webhook/mt'
+          }, ${config.maintenance.mockLine ? 'MOCK' : 'LIVE'}, MCP ${config.maintenance.mcpUrl}, โมเดล ${maintenanceModelLabel()})`
+        : 'ยังไม่ตั้ง CHANNEL_ACCESS_TOKEN_MT/CHANNEL_SECRET_MT (หรือ MAINTENANCE_USE_HR_OA=true)'
     }`,
     `MT events      : ${
       config.maintenance.events.enabled
         ? `รับจาก RabbitMQ ${config.maintenance.events.url.replace(/:[^:@/]*@/, ':****@')} (${config.maintenance.events.routingKeys.join(', ')})`
         : 'ปิด (ไม่ได้ตั้ง RABBITMQ_URL)'
+    }`,
+    `MT กลุ่มแจ้งเตือน : ${
+      config.maintenance.alertGroupIds.length > 0
+        ? config.maintenance.alertGroupIds.join(', ')
+        : `เฉพาะกลุ่มที่ชื่อมีคำว่า ${config.maintenance.groupKeywords.join(' / ')} (ไม่มี = ไม่ส่ง)`
     }`,
     `Session        : ${config.sessionInDatabase ? 'เก็บใน PostgreSQL' : 'เก็บใน memory (หายเมื่อ restart)'}`,
     `AI สรุปแชท     : ${aiProviderLabel()}`,

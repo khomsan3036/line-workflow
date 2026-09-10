@@ -62,7 +62,8 @@ export function configuredReportTargets(): string[] {
 export async function runAttendanceReport(options: AttendanceReportOptions = {}): Promise<AttendanceReportOutcome> {
   const query: AttendanceQuery = {
     period: buildPeriod(options.period ?? parsePeriod(config.scheduler.reportPeriod)),
-    location: options.location ?? parseLocation(config.scheduler.reportLocation)
+    location: options.location ?? parseLocation(config.scheduler.reportLocation),
+    groupBy: 'location'
   }
   const targetIds = options.targets && options.targets.length > 0 ? options.targets : configuredReportTargets()
   const dryRun = options.dryRun ?? false

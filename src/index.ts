@@ -39,7 +39,8 @@ app.set('views', path.join(__dirname, 'views'))
 // base path ให้ view ใช้ประกอบลิงก์: href="<%= base %>/messages"
 app.locals.base = config.basePath
 // มี OA ที่สอง (ทีมซ่อมบำรุง) ให้เลือกส่งหรือไม่ (หน้า /send)
-app.locals.maintenanceEnabled = config.maintenance.enabled
+// ป้าย/ตัวเลือก OA ในหน้าเว็บ แสดงเฉพาะเมื่อมี OA MT แยกจริง (ใช้ OA HR ร่วมกัน = มี OA เดียว ไม่ต้องให้เลือก)
+app.locals.maintenanceEnabled = config.maintenance.enabled && !config.maintenance.sharedOa
 app.locals.channelLabels = { hr: 'HR Notification', mt: 'MT Notification' }
 
 // res.redirect('/x') ในทุก route ให้เติม base path ให้อัตโนมัติ

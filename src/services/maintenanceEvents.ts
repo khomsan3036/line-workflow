@@ -1,5 +1,6 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib'
 import { config } from '../config'
+import { query, queryOne } from '../db'
 import { normalizeAlert, type AlertSeverity, type GroupAlert } from './maintenanceFlex'
 import { pushAlertToGroups } from './maintenanceLocalTools'
 
@@ -27,7 +28,7 @@ let connection: ChannelModel | null = null
 let channel: Channel | null = null
 let stopping = false
 let reconnectDelayMs = 2000
-let stats = { consumed: 0, alerted: 0, skipped: 0, failed: 0, lastEventAt: null as string | null, lastError: null as string | null }
+let stats = { consumed: 0, alerted: 0, skipped: 0, deduped: 0, failed: 0, lastEventAt: null as string | null, lastError: null as string | null }
 
 // กัน event ซ้ำ (broker ส่งซ้ำได้เมื่อ ack ไม่ถึง) จำ id ล่าสุดไว้ในหน่วยความจำ
 const seen = new Map<string, number>()
@@ -44,6 +45,80 @@ function isDuplicate(id: string | null): boolean {
 
 function str(v: unknown): string {
   return v === null || v === undefined ? '' : String(v).trim()
+}
+
+// ---------------------------------------------------------------------------
+// กันการ์ดซ้ำตามเนื้อหา
+// ปัญหาที่พบจริง (2026-09-09): alert "[URGENT] emergency repair REP-202608-0004" ถูกส่งเข้าทุกกลุ่ม 8 ครั้งใน 3 วัน
+// เพราะ tool Get* ของ MCP server (GetCriticalAlerts/GetOverallSummary/...) publish alert ทุกตัวที่พบลง
+// maintenance.line.notification ทุกครั้งที่แชทบอทหรือตัวตั้งเวลาถาม (ฝั่งนั้นกันซ้ำด้วย AlertId แค่ 60 นาที ในหน่วยความจำ)
+//   1) alert ที่เกิดจากคำถามของแอปนี้เอง (payload.tool = Get* และ requestedBy เป็น line:U.../scheduler) -> ข้าม
+//      เพราะผู้ถามได้การ์ดคำตอบแล้ว และตัวตั้งเวลาก็ส่งการ์ดสรุปเข้ากลุ่มเองอยู่แล้ว
+//   2) ที่เหลือจำคีย์ตามเนื้อหาไว้ในตาราง maintenance_alert_dedupe (รอดข้าม restart ของ tsx watch และใช้ร่วมกันหลาย instance)
+//      ไม่ส่งคีย์เดิมซ้ำภายใน MAINTENANCE_EVENT_DEDUPE_HOURS
+// ---------------------------------------------------------------------------
+
+/** ผู้ถามที่เป็นแอปนี้เอง: requestedByLabel ใน maintenanceAgent.ts ให้ "ชื่อ (line:U...)" และตัวตั้งเวลาให้ "scheduler (line:scheduler)" */
+const OWN_REQUESTER = /line:(u[0-9a-f]{32}|scheduler)\b/i
+
+function isNotificationKey(routingKey: string): boolean {
+  return /^maintenance\.[a-z]+\.notification$/.test(routingKey)
+}
+
+/** alert อัตโนมัติจากการวิเคราะห์ (มี tool) ที่แอปนี้เป็นคนถามเอง */
+export function isOwnAnalysisAlert(routingKey: string, e: Json): boolean {
+  return isNotificationKey(routingKey) && str(e.tool) !== '' && OWN_REQUESTER.test(str(e.requestedBy))
+}
+
+/**
+ * คีย์กันซ้ำตามเนื้อหา (null = ไม่กันตามเนื้อหา ใช้แค่ id ของข้อความ)
+ *   คำขอจากระบบ: เลขที่คำขอ/booking  (publisher ส่งซ้ำด้วย eventId ใหม่ก็ยังกันได้)
+ *   alert อัตโนมัติ: alertId ที่ MCP คำนวณจาก service|category|reference (คงที่ต่อ alert เดิม)
+ *   Send* ที่ผู้ใช้สั่งเอง (ไม่มี alertId/tool): ไม่กันตามเนื้อหา ส่งซ้ำได้ตามที่สั่ง
+ */
+export function dedupeKey(routingKey: string, e: Json): string | null {
+  let key: string | null = null
+  if (routingKey === 'repair.requested') key = str(e.repairRequestId) ? `repair:${str(e.repairRequestId)}` : null
+  else if (routingKey === 'fuel.requested') key = str(e.fuelRequestId) || str(e.requestNo) ? `fuel:${str(e.fuelRequestId) || str(e.requestNo)}` : null
+  else if (routingKey === 'vehicle.booking.requested') key = str(e.bookingId) || str(e.bookingNo) ? `booking:${str(e.bookingId) || str(e.bookingNo)}` : null
+  else if (isNotificationKey(routingKey)) {
+    if (str(e.alertId)) key = `alert:${str(e.alertId)}`
+    else if (str(e.tool) && str(e.reference)) key = `alert:${[str(e.service), str(e.category), str(e.reference)].join('|')}`
+  }
+  return key ? key.slice(0, 200) : null
+}
+
+/**
+ * จองสิทธิ์ส่งคีย์นี้: true = ยังไม่ได้ส่งภายในช่วงกันซ้ำ (บันทึกว่าส่งแล้ว), false = ซ้ำ
+ * ทำใน SQL คำสั่งเดียว (INSERT ... ON CONFLICT ... WHERE พ้นช่วง) จึงปลอดภัยเมื่อหลาย instance รับพร้อมกัน
+ * DB ล่มให้ถอยไปกันซ้ำในหน่วยความจำของ process นี้แทน
+ */
+export async function claimForSend(key: string, hours: number): Promise<boolean> {
+  try {
+    const claimed = await queryOne<{ dedupe_key: string }>(
+      `INSERT INTO maintenance_alert_dedupe (dedupe_key, first_sent_at, last_seen_at, hits)
+       VALUES ($1, now(), now(), 0)
+       ON CONFLICT (dedupe_key) DO UPDATE SET first_sent_at = now(), last_seen_at = now(), hits = 0
+         WHERE maintenance_alert_dedupe.first_sent_at < now() - interval '1 hour' * $2::float8
+       RETURNING dedupe_key`,
+      [key, hours]
+    )
+    if (claimed) return true
+    await query('UPDATE maintenance_alert_dedupe SET last_seen_at = now(), hits = hits + 1 WHERE dedupe_key = $1', [key])
+    return false
+  } catch (err) {
+    console.warn('[MT-events] ตาราง maintenance_alert_dedupe ใช้ไม่ได้ กันซ้ำในหน่วยความจำแทน:', err instanceof Error ? err.message : err)
+    return !isDuplicate(`content:${key}`)
+  }
+}
+
+/** ลบคีย์เก่าที่ไม่เห็นมานาน (เรียกตอนต่อ RabbitMQ ได้) */
+async function purgeDedupe(): Promise<void> {
+  try {
+    await query(`DELETE FROM maintenance_alert_dedupe WHERE last_seen_at < now() - interval '30 days'`)
+  } catch {
+    // ตารางยังไม่ถูกสร้าง (ยังไม่ได้รัน db:setup) จะเห็น warn ตอน claimForSend แทน
+  }
 }
 
 function enumName(v: unknown, names: string[]): string {
@@ -292,14 +367,33 @@ async function handleMessage(msg: ConsumeMessage): Promise<void> {
     return
   }
 
+  const cfg = config.maintenance.events
+  if (cfg.skipOwnAnalysisAlerts && isOwnAnalysisAlert(key, payload)) {
+    stats.deduped++
+    console.log(`[MT-events] ข้าม ${key} "${alert.title}": alert อัตโนมัติจากคำถามของแอปนี้เอง (${str(payload.tool)} โดย ${str(payload.requestedBy)})`)
+    return
+  }
+  const contentKey = dedupeKey(key, payload)
+  if (contentKey && cfg.dedupeHours > 0 && !(await claimForSend(contentKey, cfg.dedupeHours))) {
+    stats.deduped++
+    console.log(`[MT-events] ข้าม ${key} "${alert.title}": ส่ง ${contentKey} ไปแล้วภายใน ${cfg.dedupeHours} ชม.`)
+    return
+  }
+
   // payload จาก MCP ระบุ groupId ได้ (AlertNotifications:GroupId) ถ้าตรงกับกลุ่มที่บอทอยู่ให้ส่งเฉพาะกลุ่มนั้น
+  // ไม่ระบุ/ไม่ตรง -> กลุ่มของทีมซ่อมบำรุงเท่านั้น (MT_ALERT_GROUP_IDS หรือชื่อกลุ่มมีคำว่า MT) ไม่ใช่ทุกกลุ่มที่บอทอยู่
   const groupHint = str(payload.groupId) || null
   let result = await pushAlertToGroups(alert, `mt-events:${key}`, groupHint)
-  if (result.targets === 0 && groupHint) result = await pushAlertToGroups(alert, `mt-events:${key}`)
+  if (result.targets === 0 && groupHint) {
+    console.warn(`[MT-events] ${key}: ไม่พบกลุ่ม ${groupHint} ที่บอทอยู่ ส่งเข้ากลุ่มทีมซ่อมบำรุงแทน`)
+    result = await pushAlertToGroups(alert, `mt-events:${key}`)
+  }
 
   if (result.targets === 0) {
     stats.skipped++
-    console.warn(`[MT-events] ${key}: บอท MT ยังไม่ได้อยู่ในกลุ่มใด จึงไม่ได้แจ้ง`)
+    console.warn(
+      `[MT-events] ${key}: ยังไม่มีกลุ่มทีมซ่อมบำรุงให้ส่ง (เชิญบอทเข้ากลุ่มที่ชื่อมีคำว่า MT/ซ่อมบำรุง หรือตั้ง MT_ALERT_GROUP_IDS)`
+    )
     return
   }
   const ok = result.sent.filter((s) => s.status === 'sent' || s.status === 'mock').length
@@ -356,6 +450,7 @@ async function connect(): Promise<void> {
   connection = conn
   channel = ch
   reconnectDelayMs = 2000
+  void purgeDedupe()
   console.log(
     `[MT-events] รับ event จาก RabbitMQ แล้ว (exchange ${cfg.exchange}, queue ${cfg.queue}, keys: ${cfg.routingKeys.join(', ')})`
   )
