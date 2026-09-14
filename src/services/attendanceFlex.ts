@@ -1,5 +1,6 @@
 import type { AttendanceSummary, DayStat, GroupStat, LocationStat } from './attendance'
 import { UNKNOWN_GROUP } from './attendance'
+import { CROSS_CHECK_TIME_TOLERANCE_MIN, crossCheckRate, type CrossCheckStat } from './attendanceCrossCheck'
 import {
   GROUP_LABELS,
   GROUP_UNITS,
@@ -42,6 +43,43 @@ const CHIP_TONES: Record<string, { bg: string; fg: string }> = {
 const LOCATION_COLORS: Record<string, string> = {
   Workshop: GREEN,
   Site: BLUE
+}
+
+// ผลตรวจเทียบ bPlus: ป้ายพื้นอ่อน + ตัวอักษรเข้มสีเดียวกัน (คู่สีเดียวกับ myAttendanceFlex.ts)
+type Tone = { bg: string; fg: string }
+const AMBER_INK = '#B45309'
+const RED_INK = '#B91C1C'
+const BLUE_INK = '#1D4ED8'
+const TONE_GREEN: Tone = { bg: '#ECFDF5', fg: GREEN_INK }
+const TONE_AMBER: Tone = { bg: '#FFFBEB', fg: AMBER_INK }
+const TONE_RED: Tone = { bg: '#FEF2F2', fg: RED_INK }
+const TONE_GRAY: Tone = { bg: '#F3F4F6', fg: '#374151' }
+
+/** เกณฑ์ % ที่ตรงกัน: ตั้งแต่ OK = ตรงกันดี, ตั้งแต่ WARN = ต่างกันเล็กน้อย, ต่ำกว่านั้น = ควรตรวจสอบ */
+const MATCH_OK_PCT = 98
+const MATCH_WARN_PCT = 90
+
+interface CrossCheckStatus {
+  pending: boolean
+  rate: number | null
+  label: string
+  tone: Tone
+  barColor: string
+}
+
+function crossCheckStatus(c: CrossCheckStat): CrossCheckStatus {
+  const rate = crossCheckRate(c)
+  if (c.comparedDays === 0 || rate === null) {
+    return { pending: true, rate: null, label: 'รอข้อมูล bPlus', tone: TONE_GRAY, barColor: TRACK }
+  }
+  if (rate >= MATCH_OK_PCT) return { pending: false, rate, label: 'ตรงกันดี', tone: TONE_GREEN, barColor: GREEN }
+  if (rate >= MATCH_WARN_PCT) return { pending: false, rate, label: 'ต่างกันเล็กน้อย', tone: TONE_AMBER, barColor: AMBER }
+  return { pending: false, rate, label: 'ควรตรวจสอบ', tone: TONE_RED, barColor: '#EF4444' }
+}
+
+/** 97.5 -> "97.5", 100 -> "100" */
+function fmtRate(rate: number): string {
+  return Number.isInteger(rate) ? String(rate) : rate.toFixed(1)
 }
 
 function fmt(n: number): string {
@@ -168,6 +206,19 @@ function statCell(label: string, value: string, valueColor = INK) {
   }
 }
 
+/** ป้ายชิดซ้าย กว้างเท่าข้อความ (filler กินที่เหลือ ป้ายไม่ยืดเต็มแถวและไม่ถูกตัดเป็น "...") */
+function chipRow(text: string, tone: Tone, margin = 'sm') {
+  return { type: 'box', layout: 'horizontal', margin, contents: [chip(text, tone), { type: 'filler' }] }
+}
+
+/** ป้ายสรุปผลเทียบ bPlus บนหัวการ์ด ให้เห็นทันทีว่าตัวเลขเชื่อถือได้แค่ไหน */
+function crossCheckBadge(c: CrossCheckStat) {
+  const s = crossCheckStatus(c)
+  if (s.pending) return chipRow('bPlus · รอข้อมูลเพื่อเทียบ', s.tone, 'md')
+  const text = `ตรงกับ bPlus ${fmtRate(s.rate ?? 0)}%`
+  return chipRow(s.tone === TONE_GREEN ? text : `${text} · ${s.label}`, s.tone, 'md')
+}
+
 function header(summary: AttendanceSummary) {
   const { query } = summary
   return {
@@ -189,9 +240,130 @@ function header(summary: AttendanceSummary) {
         ]
       },
       { type: 'text', text: 'พนักงานสแกนเข้างาน', size: 'lg', weight: 'bold', color: '#FFFFFF', wrap: true },
-      { type: 'text', text: subtitle(query), size: 'xs', color: '#CBD5E1', wrap: true }
+      { type: 'text', text: subtitle(query), size: 'xs', color: '#CBD5E1', wrap: true },
+      ...(summary.crossCheck ? [crossCheckBadge(summary.crossCheck)] : [])
     ]
   }
+}
+
+/** แถวผลเทียบ: จุดสี + คำอธิบาย (ตัดบรรทัดได้) + ตัวเลขชิดขวา */
+function checkRow(label: string, value: number, dotColor: string, valueColor = INK) {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    margin: 'md',
+    contents: [
+      { type: 'text', text: '●', size: 'xs', color: dotColor, flex: 0, gravity: 'center' },
+      { type: 'text', text: label, size: 'sm', color: INK, margin: 'sm', flex: 1, wrap: true, gravity: 'center' },
+      { type: 'text', text: fmt(value), size: 'sm', color: valueColor, weight: 'bold', align: 'end', flex: 0, margin: 'md', gravity: 'center' }
+    ]
+  }
+}
+
+/** "2026-09-14 10:30" -> "จ. 14 ก.ย. 10:30 น." */
+function formatSyncAt(value: string): string {
+  const [date, time] = value.split(' ')
+  return `${formatThaiDateShort(date)} ${time ?? ''} น.`.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * ส่วน "ตรวจเทียบกับระบบ bPlus": % ที่ตรงกันตัวใหญ่ + ป้ายสถานะ + แถบ แล้วแจกแจงว่าไม่ตรงเพราะอะไร
+ * คำอธิบายเป็นภาษาคน (สแกนแล้วแต่ไม่มีใน bPlus / มีใน bPlus แต่ไม่พบสแกน) ให้ HR รู้ว่าต้องไปดูฝั่งไหน
+ */
+function crossCheckSection(summary: AttendanceSummary): unknown[] {
+  const c = summary.crossCheck
+  if (!c) return []
+  const s = crossCheckStatus(c)
+  const unit = summary.query.period.single ? 'คน' : 'คน-วัน'
+  const syncLine = c.lastSyncAt ? `bPlus ซิงก์ล่าสุด ${formatSyncAt(c.lastSyncAt)}` : ''
+
+  if (s.pending) {
+    return [
+      sectionTitle('ตรวจเทียบกับระบบ bPlus'),
+      {
+        type: 'box',
+        layout: 'vertical',
+        margin: 'sm',
+        backgroundColor: CARD,
+        cornerRadius: '10px',
+        paddingAll: '14px',
+        contents: [
+          chipRow(s.label, s.tone, 'none'),
+          { type: 'text', text: 'bPlus ยังไม่มีเวลาลงงานของช่วงนี้', size: 'sm', color: INK, weight: 'bold', margin: 'md', wrap: true },
+          {
+            type: 'text',
+            text: 'ปกติ bPlus นำเข้าเวลาช้ากว่าเครื่องสแกน ระบบจะเทียบให้อัตโนมัติเมื่อข้อมูลเข้าแล้ว',
+            size: 'xs',
+            color: MUTED,
+            margin: 'xs',
+            wrap: true
+          },
+          ...(syncLine ? [{ type: 'text', text: syncLine, size: 'xs', color: MUTED, margin: 'sm', wrap: true }] : [])
+        ]
+      }
+    ]
+  }
+
+  const rate = s.rate ?? 0
+  const compared = c.matched + c.scanOnly + c.bplusOnly
+  const rows: unknown[] = [
+    checkRow('ตรงกันทั้งสองระบบ', c.matched, GREEN, GREEN_INK),
+    checkRow('สแกนนิ้วแล้ว แต่ไม่มีใน bPlus', c.scanOnly, AMBER, c.scanOnly > 0 ? AMBER_INK : INK),
+    checkRow('มีใน bPlus แต่ไม่พบการสแกนนิ้ว', c.bplusOnly, BLUE, c.bplusOnly > 0 ? BLUE_INK : INK)
+  ]
+  if (c.timeDiff > 0) rows.push(checkRow(`ตรงกัน แต่เวลาเข้าต่างกันเกิน ${CROSS_CHECK_TIME_TOLERANCE_MIN} นาที`, c.timeDiff, '#9CA3AF'))
+  if (c.unlinked > 0) rows.push(checkRow('ใน bPlus ไม่มีเลขบัตร (จับคู่ไม่ได้)', c.unlinked, '#9CA3AF', MUTED))
+
+  // ช่วงหลายวัน: บอกว่าเทียบได้กี่วัน (วันที่ bPlus ยังไม่นำเข้าไม่นับว่าไม่ตรง)
+  const waitingDays = Math.max(0, c.scanDays - c.comparedDays)
+  const notes = [
+    summary.query.period.single ? '' : `เทียบได้ ${fmt(c.comparedDays)} วัน${waitingDays > 0 ? ` · รอ bPlus อีก ${fmt(waitingDays)} วัน` : ''}`,
+    syncLine
+  ].filter(Boolean)
+
+  return [
+    sectionTitle('ตรวจเทียบกับระบบ bPlus'),
+    {
+      type: 'box',
+      layout: 'vertical',
+      margin: 'sm',
+      backgroundColor: CARD,
+      cornerRadius: '10px',
+      paddingAll: '14px',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'box',
+              layout: 'vertical',
+              flex: 1,
+              contents: [
+                {
+                  type: 'box',
+                  layout: 'baseline',
+                  contents: [
+                    { type: 'text', text: `${fmtRate(rate)}%`, size: 'xxl', weight: 'bold', color: s.tone.fg, flex: 0 },
+                    { type: 'text', text: 'ตรงกัน', size: 'sm', color: MUTED, margin: 'sm', flex: 0 }
+                  ]
+                },
+                { type: 'text', text: `${fmt(c.matched)} จาก ${fmt(compared)} ${unit}`, size: 'xs', color: MUTED, wrap: true }
+              ]
+            },
+            // ป้ายสถานะชิดบนขวา (filler ด้านล่างกันป้ายยืดสูงเท่าแถว)
+            { type: 'box', layout: 'vertical', flex: 0, contents: [chip(s.label, s.tone), { type: 'filler' }] }
+          ]
+        },
+        bar(rate <= 0 ? 0 : Math.max(2, Math.round(rate)), s.barColor),
+        { type: 'separator', margin: 'lg', color: TRACK },
+        ...rows,
+        ...(notes.length > 0
+          ? [{ type: 'text', text: notes.join(' · '), size: 'xs', color: MUTED, margin: 'lg', wrap: true }]
+          : [])
+      ]
+    }
+  ]
 }
 
 function heroSingleDay(summary: AttendanceSummary) {
@@ -509,6 +681,9 @@ export function flexAttendanceSummary(summary: AttendanceSummary, today: string)
     })
   }
 
+  // ตรวจเทียบ bPlus อยู่ก่อนรายวัน ให้เห็นโดยไม่ต้องเลื่อนผ่านรายการยาว ๆ
+  body.push(...crossCheckSection(summary))
+
   if (!single && query.groupBy === 'location') {
     body.push(sectionTitle('รายวัน'))
     body.push(...dayRows(summary.days, query.location === 'all' ? NAVY_SOFT : locationColor(query.location), today))
@@ -517,7 +692,7 @@ export function flexAttendanceSummary(summary: AttendanceSummary, today: string)
   body.push({ type: 'separator', margin: 'lg', color: TRACK })
   body.push({
     type: 'text',
-    text: `ข้อมูล ณ ${nowTimeLocal()} น. · จากเครื่องสแกนนิ้ว`,
+    text: `ข้อมูล ณ ${nowTimeLocal()} น. · จากเครื่องสแกนนิ้ว${summary.crossCheck ? ' เทียบกับ bPlus' : ''}`,
     size: 'xs',
     color: MUTED,
     margin: 'md',
@@ -577,11 +752,13 @@ export function attendanceAltText(summary: AttendanceSummary): string {
   const where = `${filterPhrase(query)}${query.location === 'all' ? '' : ` (${query.location})`}`
   const grouped =
     query.groupBy === 'location' ? '' : ` ${GROUP_LABELS[query.groupBy]} ${fmt(summary.byGroup.length)} ${GROUP_UNITS[query.groupBy]}`
+  const check = summary.crossCheck ? crossCheckStatus(summary.crossCheck) : null
+  const checked = check && !check.pending ? ` · ตรงกับ bPlus ${fmtRate(check.rate ?? 0)}%` : ''
   if (query.period.single) {
-    return `พนักงานสแกนเข้างาน ${query.period.label}${where}: ${fmt(summary.totalPeople)} คน${grouped}`
+    return `พนักงานสแกนเข้างาน ${query.period.label}${where}: ${fmt(summary.totalPeople)} คน${grouped}${checked}`
   }
   const avg = summary.activeDays > 0 ? Math.round(summary.totalPeople / summary.activeDays) : 0
-  return `พนักงานเข้างาน ${query.period.label}${where}: เฉลี่ย ${fmt(avg)} คน/วัน${grouped}`
+  return `พนักงานเข้างาน ${query.period.label}${where}: เฉลี่ย ${fmt(avg)} คน/วัน${grouped}${checked}`
 }
 
 /** ปุ่มลัดใต้ช่องพิมพ์ ให้สลับสถานที่/ช่วงเวลาได้ทันที */

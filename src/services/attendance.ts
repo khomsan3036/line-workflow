@@ -1,6 +1,7 @@
 import { getMssqlPool, mssqlEnabled, sql } from '../dbMssql'
 import type { AttendanceQuery, GroupBy, LocationFilter } from './attendanceQuery'
 import { addDays } from './attendanceQuery'
+import { getBplusCrossCheck, type CrossCheckStat } from './attendanceCrossCheck'
 
 // ---------------------------------------------------------------------------
 // อ่านสรุปการเข้างานจากตาราง AttendanceDaily (SQL Server ของระบบ HR)
@@ -64,6 +65,19 @@ export interface AttendanceSummary {
   latestIn: string | null
   /** เวลาที่ข้อมูลอัปเดตล่าสุดในตาราง (ISO) */
   updatedAt: Date | null
+  /** ผลตรวจเทียบกับ bPlus (AttendanceTmTran); null = ไม่ได้เทียบ (มีตัวกรองแผนก/ตำแหน่ง หรืออ่านไม่สำเร็จ) */
+  crossCheck: CrossCheckStat | null
+}
+
+/** อ่านผลตรวจเทียบ bPlus แบบไม่ทำให้การ์ดหลักล้ม: ตาราง bPlus อาจยังไม่ sync หรือไม่มีในบางเครื่อง */
+async function safeCrossCheck(query: AttendanceQuery): Promise<CrossCheckStat | null> {
+  if (query.department || query.position) return null
+  try {
+    return await getBplusCrossCheck(query)
+  } catch (err) {
+    console.error('[เข้างาน] ตรวจเทียบ bPlus ไม่สำเร็จ:', err instanceof Error ? err.message : err)
+    return null
+  }
 }
 
 interface DayLocationRow {
@@ -317,7 +331,8 @@ export async function getAttendanceSummary(query: AttendanceQuery): Promise<Atte
     days,
     earliestIn: byLocation.reduce<string | null>((m, l) => minTime(m, l.earliestIn), null),
     latestIn: byLocation.reduce<string | null>((m, l) => maxTime(m, l.latestIn), null),
-    updatedAt: totals.recordset[0]?.UpdatedAt ?? null
+    updatedAt: totals.recordset[0]?.UpdatedAt ?? null,
+    crossCheck: totalPeople > 0 ? await safeCrossCheck(query) : null
   }
 }
 
