@@ -14,6 +14,14 @@ function list(v: string | undefined): string[] {
     .filter(Boolean)
 }
 
+/** หลาย cron คั่นด้วย ; -> array เช่น "30 10 * * *;0 20 * * *" (จุลภาคเป็นส่วนหนึ่งของ cron จึงใช้คั่นไม่ได้) */
+function splitCronList(v: string): string[] {
+  return v
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback
   return value.toLowerCase() === 'true' || value === '1'
@@ -269,6 +277,9 @@ export const config = {
     summaryCron: process.env.SUMMARY_CRON ?? '0 18 * * *',
     // REPORT_CRON ส่งการ์ด "สรุปการเข้างาน" (จำนวนพนักงานสแกนเข้างาน) ไม่ใช่รายงานยอดขายจำลองของหลักสูตรอีกต่อไป
     reportCron: process.env.REPORT_CRON ?? '0 8 * * *',
+    // หลายรอบต่อวันที่นาทีไม่เท่ากัน (เช่น 10:30 และ 20:00) เขียนเป็น cron เดียวไม่ได้ จึงคั่นหลาย cron ด้วย ;
+    // เช่น REPORT_CRON=30 10 * * *;0 20 * * *  (ห้ามใช้จุลภาค เพราะ cron ใช้จุลภาคในช่องอยู่แล้ว เช่น 0 10,14 * * *)
+    reportCrons: splitCronList(process.env.REPORT_CRON ?? '0 8 * * *'),
     // ปลายทางของการ์ดสรุปการเข้างาน คั่นด้วยจุลภาค (C... = กลุ่ม, U... = ผู้ใช้สำหรับทดสอบ) ว่าง = ใช้ DEFAULT_GROUP_ID
     reportTargets: (process.env.REPORT_GROUP_IDS ?? '')
       .split(',')
@@ -309,10 +320,14 @@ export function cronTimeLabel(expr: string): string | null {
  */
 export function reportScheduleNote(): string | null {
   if (!config.scheduler.enabled) return null
-  const label = cronTimeLabel(config.scheduler.reportCron)
-  if (!label) return `ตั้งเวลาส่งอัตโนมัติไว้แล้ว (REPORT_CRON = ${config.scheduler.reportCron})`
-  const hour = Number(label.slice(0, 2))
-  return `ส่งอัตโนมัติ${hour < 12 ? 'ทุกเช้า' : 'ทุกวัน'} ${label}`
+  const crons = config.scheduler.reportCrons
+  const labels = crons.map(cronTimeLabel)
+  if (crons.length === 0 || labels.some((l) => l === null)) {
+    return `ตั้งเวลาส่งอัตโนมัติไว้แล้ว (REPORT_CRON = ${config.scheduler.reportCron})`
+  }
+  if (labels.length > 1) return `ส่งอัตโนมัติวันละ ${labels.length} รอบ ${labels.join(' และ ')}`
+  const hour = Number(labels[0]!.slice(0, 2))
+  return `ส่งอัตโนมัติ${hour < 12 ? 'ทุกเช้า' : 'ทุกวัน'} ${labels[0]}`
 }
 
 /** ผู้ให้บริการโมเดลของแชทบอทซ่อมบำรุงตามลำดับ (ตัวแรก = หลัก, ตัวถัดไป = สำรองเมื่อตัวแรกใช้ไม่ได้) */

@@ -44,11 +44,14 @@ export function startScheduler(): void {
     console.log(`[scheduler] ตั้งงานสรุปแชทไว้ที่ "${config.scheduler.summaryCron}" (${tz})`)
   }
 
-  if (!cron.validate(config.scheduler.reportCron)) {
-    console.error(`[scheduler] รูปแบบ REPORT_CRON ไม่ถูกต้อง: ${config.scheduler.reportCron}`)
-  } else {
+  // REPORT_CRON ใส่ได้หลายรอบคั่นด้วย ; (เช่น 10:30 และ 20:00) แต่ละรอบตั้งงานแยกกัน รอบที่รูปแบบผิดข้ามไปรอบเดียว
+  for (const reportCron of config.scheduler.reportCrons) {
+    if (!cron.validate(reportCron)) {
+      console.error(`[scheduler] รูปแบบ REPORT_CRON ไม่ถูกต้อง: ${reportCron}`)
+      continue
+    }
     cron.schedule(
-      config.scheduler.reportCron,
+      reportCron,
       async () => {
         console.log(`[scheduler] เริ่มงานสรุปการเข้างาน ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
         try {
@@ -69,7 +72,7 @@ export function startScheduler(): void {
       },
       { timezone: tz }
     )
-    console.log(`[scheduler] ตั้งงานสรุปการเข้างานไว้ที่ "${config.scheduler.reportCron}" (${tz})`)
+    console.log(`[scheduler] ตั้งงานสรุปการเข้างานไว้ที่ "${reportCron}" (${tz})`)
   }
 
   // OA ทีมซ่อมบำรุง: การ์ด "งานซ่อมค้างวันนี้" และ "แจ้งเตือนงานซ่อมเร่งด่วน" (ว่าง = ปิดงานนั้น)
