@@ -69,13 +69,43 @@ export interface AttendanceSummary {
   crossCheck: CrossCheckStat | null
 }
 
+/**
+ * ผลตรวจเทียบ bPlus ครั้งล่าสุดที่ล้ม (ดูได้จาก /health)
+ * การ์ดจะไม่มีส่วน "ตรวจเทียบกับระบบ bPlus" เลยเมื่อ query ล้ม ซึ่งเงียบเกินไป
+ * เครื่อง production เข้าไปดู log ยาก จึงเก็บเหตุผลไว้ให้เรียกดูจากภายนอกได้
+ */
+let lastCrossCheckError: { at: string; query: string; message: string } | null = null
+
+/** สถานะการตรวจเทียบ bPlus สำหรับ /health (ok = ครั้งล่าสุดผ่าน) */
+export function crossCheckHealth(): { ok: boolean; lastError: typeof lastCrossCheckError } {
+  return { ok: lastCrossCheckError === null, lastError: lastCrossCheckError }
+}
+
+/** ข้อความผิดพลาดของ mssql มีเลข error/state ที่บอกสาเหตุได้ตรงกว่า message เปล่า ๆ */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err)
+  const e = err as Error & { code?: string; number?: number; state?: number }
+  const tags = [e.name, e.code, e.number !== undefined ? `SQL ${e.number}` : '', e.state !== undefined ? `state ${e.state}` : '']
+    .filter(Boolean)
+    .join(' ')
+  return tags ? `${e.message} (${tags})` : e.message
+}
+
 /** อ่านผลตรวจเทียบ bPlus แบบไม่ทำให้การ์ดหลักล้ม: ตาราง bPlus อาจยังไม่ sync หรือไม่มีในบางเครื่อง */
 async function safeCrossCheck(query: AttendanceQuery): Promise<CrossCheckStat | null> {
   if (query.department || query.position) return null
   try {
-    return await getBplusCrossCheck(query)
+    const stat = await getBplusCrossCheck(query)
+    lastCrossCheckError = null
+    return stat
   } catch (err) {
-    console.error('[เข้างาน] ตรวจเทียบ bPlus ไม่สำเร็จ:', err instanceof Error ? err.message : err)
+    const message = describeError(err)
+    lastCrossCheckError = {
+      at: new Date().toISOString(),
+      query: `${query.period.start}..${query.period.end} / ${query.location}`,
+      message
+    }
+    console.error(`[เข้างาน] ตรวจเทียบ bPlus ไม่สำเร็จ (${lastCrossCheckError.query}):`, message)
     return null
   }
 }

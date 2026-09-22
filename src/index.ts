@@ -11,6 +11,7 @@ import { createLineLoginRouter } from './routes/lineLogin'
 import { createWebhookRouter } from './routes/webhook'
 import { startScheduler } from './scheduler'
 import { maintenanceMcpStatus } from './services/maintenanceMcp'
+import { attendanceAvailable, crossCheckHealth } from './services/attendance'
 import { maintenanceEventsStatus, startMaintenanceEventConsumer } from './services/maintenanceEvents'
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,8 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
     maintenance: config.maintenance.enabled
       ? { lineMode: config.maintenance.mockLine ? 'mock' : 'live', mcp: maintenanceMcpStatus(), events: maintenanceEventsStatus() }
       : 'off',
+    // การเข้างาน: บอกด้วยว่าการตรวจเทียบกับ bPlus ครั้งล่าสุดผ่านหรือไม่ (การ์ดจะไม่มีส่วนนั้นเมื่อไม่ผ่าน)
+    attendance: attendanceAvailable() ? { crossCheck: crossCheckHealth() } : 'off',
     basePath: config.basePath || '/'
   })
 }
