@@ -132,6 +132,13 @@ export const config = {
   // ค่าเริ่มต้น false = ต้องผ่าน LINE Login ก่อนเสมอ (ใช้ true เฉพาะตอนพัฒนาที่ยังไม่มี LINE Login channel)
   myAttendanceAllowUnverified: bool(process.env.MY_ATTENDANCE_ALLOW_UNVERIFIED, false),
 
+  // ปุ่ม "ดูรายชื่อ" ผลตรวจเทียบ bPlus บนการ์ดสรุปการเข้างาน: เปิดให้เฉพาะผู้ที่ยืนยันตัวตนแล้ว
+  // และอยู่แผนกใน CROSS_CHECK_LIST_DEPTS (ตาม MANPOWER_HR.DEPT ไม่สนตัวพิมพ์) หรือมีรหัสใน CROSS_CHECK_LIST_PRS_NOS
+  crossCheckList: {
+    depts: list(process.env.CROSS_CHECK_LIST_DEPTS ?? 'HR').map((d) => d.toLowerCase()),
+    prsNos: list(process.env.CROSS_CHECK_LIST_PRS_NOS).map((d) => d.toUpperCase())
+  },
+
   channelAccessToken,
   channelSecret,
   mockLine,

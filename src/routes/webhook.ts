@@ -19,6 +19,7 @@ import { recordGroupMessage } from '../services/groupMessages'
 import { handleUnsend } from '../services/unsend'
 import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
 import { MAINTENANCE_HINT_LINE, buildTopicHelp, resolveTopic, topicQuickReply } from '../services/topicRouter'
+import { handleCrossCheckListPostback } from '../services/crossCheckListHandler'
 
 // ---------------------------------------------------------------------------
 // ขาเข้า: รับ event จาก LINE Platform แล้วบันทึกข้อความในกลุ่มลง PostgreSQL
@@ -200,6 +201,18 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // 5) ผู้ใช้กดปุ่ม Rich Menu ที่เป็น action ชนิด postback
   if (event.type === 'postback') {
+    // ปุ่ม "ดูรายชื่อ" บนการ์ดสรุปการเข้างาน (ตรวจเทียบ bPlus) ส่งรายชื่อเข้าแชทส่วนตัวเฉพาะ HR
+    if (
+      event.source.userId &&
+      (await handleCrossCheckListPostback({
+        data: event.postback.data,
+        replyToken: event.replyToken,
+        userId: event.source.userId,
+        groupId: event.source.type === 'group' ? event.source.groupId : null
+      }))
+    ) {
+      return
+    }
     const reply = replyForPostback(event.postback.data)
     // ใช้ OA ร่วมกัน: ปุ่มของฝั่งซ่อมบำรุง (data=q=<คำถาม>) ให้แชทบอทซ่อมบำรุงตอบ
     const question = reply === null && maintenanceInHrChat() ? maintenanceQuestionFromPostback(event.postback.data) : null

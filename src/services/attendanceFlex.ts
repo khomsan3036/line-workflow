@@ -1,10 +1,19 @@
 import type { AttendanceSummary, DayStat, GroupStat, LocationStat } from './attendance'
 import { UNKNOWN_GROUP } from './attendance'
-import { CROSS_CHECK_TIME_TOLERANCE_MIN, crossCheckRate, type CrossCheckStat } from './attendanceCrossCheck'
+import {
+  CROSS_CHECK_TIME_TOLERANCE_MIN,
+  crossCheckPostbackData,
+  crossCheckRate,
+  type CrossCheckKind,
+  type CrossCheckListRequest,
+  type CrossCheckPerson,
+  type CrossCheckStat
+} from './attendanceCrossCheck'
 import {
   GROUP_LABELS,
   GROUP_UNITS,
   LOCATION_LABELS,
+  formatThaiDate,
   formatThaiDateShort,
   nowTimeLocal,
   type AttendanceQuery,
@@ -246,17 +255,47 @@ function header(summary: AttendanceSummary) {
   }
 }
 
-/** แถวผลเทียบ: จุดสี + คำอธิบาย (ตัดบรรทัดได้) + ตัวเลขชิดขวา */
-function checkRow(label: string, value: number, dotColor: string, valueColor = INK) {
+/** แถวผลเทียบ: จุดสี + คำอธิบาย (ตัดบรรทัดได้) + ตัวเลขชิดขวา; มี action = แตะทั้งแถวเพื่อดูรายชื่อ (ตัวเลขมี ›) */
+function checkRow(label: string, value: number, dotColor: string, valueColor = INK, action?: unknown) {
   return {
     type: 'box',
     layout: 'horizontal',
     margin: 'md',
+    ...(action ? { action } : {}),
     contents: [
       { type: 'text', text: '●', size: 'xs', color: dotColor, flex: 0, gravity: 'center' },
       { type: 'text', text: label, size: 'sm', color: INK, margin: 'sm', flex: 1, wrap: true, gravity: 'center' },
-      { type: 'text', text: fmt(value), size: 'sm', color: valueColor, weight: 'bold', align: 'end', flex: 0, margin: 'md', gravity: 'center' }
+      {
+        type: 'text',
+        text: action ? `${fmt(value)} ›` : fmt(value),
+        size: 'sm',
+        color: valueColor,
+        weight: 'bold',
+        align: 'end',
+        flex: 0,
+        margin: 'md',
+        gravity: 'center'
+      }
     ]
+  }
+}
+
+/** ชื่อประเภทความไม่ตรง ใช้ทั้งบนการ์ดสรุปและหัวการ์ดรายชื่อ */
+export const CROSS_CHECK_KIND_LABELS: Record<CrossCheckKind, string> = {
+  scanOnly: 'สแกนนิ้วแล้ว แต่ไม่มีใน bPlus',
+  bplusOnly: 'มีใน bPlus แต่ไม่พบการสแกนนิ้ว',
+  timeDiff: `ตรงกัน แต่เวลาเข้าต่างกันเกิน ${CROSS_CHECK_TIME_TOLERANCE_MIN} นาที`
+}
+
+/** action ของแถวที่แตะดูรายชื่อได้ (ตัวเลขเป็น 0 ไม่มีอะไรให้ดู จึงไม่ใส่) */
+function listAction(summary: AttendanceSummary, kind: CrossCheckKind, value: number) {
+  if (value <= 0) return undefined
+  const { period, location } = summary.query
+  return {
+    type: 'postback',
+    label: 'ดูรายชื่อ',
+    data: crossCheckPostbackData({ kind, start: period.start, end: period.end, location, page: 0 }),
+    displayText: `ดูรายชื่อ: ${CROSS_CHECK_KIND_LABELS[kind]}`
   }
 }
 
@@ -308,10 +347,12 @@ function crossCheckSection(summary: AttendanceSummary): unknown[] {
   const compared = c.matched + c.scanOnly + c.bplusOnly
   const rows: unknown[] = [
     checkRow('ตรงกันทั้งสองระบบ', c.matched, GREEN, GREEN_INK),
-    checkRow('สแกนนิ้วแล้ว แต่ไม่มีใน bPlus', c.scanOnly, AMBER, c.scanOnly > 0 ? AMBER_INK : INK),
-    checkRow('มีใน bPlus แต่ไม่พบการสแกนนิ้ว', c.bplusOnly, BLUE, c.bplusOnly > 0 ? BLUE_INK : INK)
+    checkRow(CROSS_CHECK_KIND_LABELS.scanOnly, c.scanOnly, AMBER, c.scanOnly > 0 ? AMBER_INK : INK, listAction(summary, 'scanOnly', c.scanOnly)),
+    checkRow(CROSS_CHECK_KIND_LABELS.bplusOnly, c.bplusOnly, BLUE, c.bplusOnly > 0 ? BLUE_INK : INK, listAction(summary, 'bplusOnly', c.bplusOnly))
   ]
-  if (c.timeDiff > 0) rows.push(checkRow(`ตรงกัน แต่เวลาเข้าต่างกันเกิน ${CROSS_CHECK_TIME_TOLERANCE_MIN} นาที`, c.timeDiff, '#9CA3AF'))
+  if (c.timeDiff > 0) {
+    rows.push(checkRow(CROSS_CHECK_KIND_LABELS.timeDiff, c.timeDiff, '#9CA3AF', INK, listAction(summary, 'timeDiff', c.timeDiff)))
+  }
   if (c.unlinked > 0) rows.push(checkRow('ใน bPlus ไม่มีเลขบัตร (จับคู่ไม่ได้)', c.unlinked, '#9CA3AF', MUTED))
 
   // ช่วงหลายวัน: บอกว่าเทียบได้กี่วัน (วันที่ bPlus ยังไม่นำเข้าไม่นับว่าไม่ตรง)
@@ -320,6 +361,7 @@ function crossCheckSection(summary: AttendanceSummary): unknown[] {
     summary.query.period.single ? '' : `เทียบได้ ${fmt(c.comparedDays)} วัน${waitingDays > 0 ? ` · รอ bPlus อีก ${fmt(waitingDays)} วัน` : ''}`,
     syncLine
   ].filter(Boolean)
+  const tapHint = c.scanOnly + c.bplusOnly + c.timeDiff > 0
 
   return [
     sectionTitle('ตรวจเทียบกับระบบ bPlus'),
@@ -360,6 +402,9 @@ function crossCheckSection(summary: AttendanceSummary): unknown[] {
         ...rows,
         ...(notes.length > 0
           ? [{ type: 'text', text: notes.join(' · '), size: 'xs', color: MUTED, margin: 'lg', wrap: true }]
+          : []),
+        ...(tapHint
+          ? [{ type: 'text', text: 'แตะแถวที่มี › เพื่อดูรายชื่อ (เฉพาะฝ่าย HR)', size: 'xs', color: BLUE_INK, margin: notes.length > 0 ? 'sm' : 'lg', wrap: true }]
           : [])
       ]
     }
@@ -794,4 +839,128 @@ export function attendanceQuickReply(query: AttendanceQuery) {
     })
   }
   return { items: items.slice(0, 13) }
+}
+
+// ---------------------------------------------------------------------------
+// การ์ดรายชื่อผลตรวจเทียบ bPlus (ตอบปุ่ม "ดูรายชื่อ" เฉพาะ HR)
+// carousel หน้าละ CROSS_CHECK_LIST_PAGE_SIZE คน แบ่งเป็น bubble ละ 20 แถว (ขนาดไม่เกินที่ LINE รับ)
+// ---------------------------------------------------------------------------
+
+const LIST_ROWS_PER_BUBBLE = 20
+const LIST_BUBBLES_PER_PAGE = 4
+export const CROSS_CHECK_LIST_PAGE_SIZE = LIST_ROWS_PER_BUBBLE * LIST_BUBBLES_PER_PAGE
+
+const KIND_TONES: Record<CrossCheckKind, { dot: string; ink: string }> = {
+  scanOnly: { dot: AMBER, ink: AMBER_INK },
+  bplusOnly: { dot: BLUE, ink: BLUE_INK },
+  timeDiff: { dot: '#9CA3AF', ink: '#374151' }
+}
+
+function listPeriodLabel(req: CrossCheckListRequest): string {
+  return req.start === req.end ? formatThaiDate(req.start) : `${formatThaiDateShort(req.start)} - ${formatThaiDateShort(req.end)}`
+}
+
+function personTimes(p: CrossCheckPerson, kind: CrossCheckKind, multiDay: boolean): string {
+  const times =
+    kind === 'scanOnly'
+      ? `สแกน ${p.scanIn ?? '-'} · bPlus ไม่มี`
+      : kind === 'bplusOnly'
+        ? `bPlus ${p.bplusIn ?? '-'} · ไม่พบสแกน`
+        : `สแกน ${p.scanIn ?? '-'} · bPlus ${p.bplusIn ?? '-'}`
+  return multiDay ? `${formatThaiDateShort(p.date)} · ${times}` : times
+}
+
+function personRow(p: CrossCheckPerson, no: number, kind: CrossCheckKind, multiDay: boolean) {
+  const idLine = [p.prsNo ?? 'ไม่พบรหัสใน bPlus', `บัตร ${p.card}`, p.location, p.dept].filter(Boolean).join(' · ')
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    margin: 'md',
+    contents: [
+      { type: 'text', text: `${no}.`, size: 'xs', color: MUTED, flex: 0, wrap: true },
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 1,
+        margin: 'sm',
+        contents: [
+          { type: 'text', text: p.name ?? 'ไม่พบในทะเบียน HR', size: 'sm', weight: 'bold', color: p.name ? INK : MUTED, wrap: true },
+          { type: 'text', text: idLine, size: 'xs', color: MUTED, wrap: true },
+          { type: 'text', text: personTimes(p, kind, multiDay), size: 'xs', color: KIND_TONES[kind].ink, wrap: true }
+        ]
+      }
+    ]
+  }
+}
+
+/** การ์ดรายชื่อหน้าที่ขอ; people คือรายชื่อทั้งหมดของประเภทนั้น (ตัดหน้าในนี้) */
+export function flexCrossCheckList(req: CrossCheckListRequest, people: CrossCheckPerson[]) {
+  const total = people.length
+  const pages = Math.max(1, Math.ceil(total / CROSS_CHECK_LIST_PAGE_SIZE))
+  const page = Math.min(req.page, pages - 1)
+  const offset = page * CROSS_CHECK_LIST_PAGE_SIZE
+  const slice = people.slice(offset, offset + CROSS_CHECK_LIST_PAGE_SIZE)
+  const multiDay = req.start !== req.end
+  const where = LOCATION_LABELS[req.location]
+  const unit = multiDay ? 'คน-วัน' : 'คน'
+
+  const bubbles = []
+  for (let i = 0; i < slice.length; i += LIST_ROWS_PER_BUBBLE) {
+    const chunk = slice.slice(i, i + LIST_ROWS_PER_BUBBLE)
+    const from = offset + i + 1
+    const to = offset + i + chunk.length
+    const isLast = i + LIST_ROWS_PER_BUBBLE >= slice.length
+    const nextPage = isLast && page + 1 < pages
+    bubbles.push({
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: NAVY,
+        paddingAll: '16px',
+        spacing: 'xs',
+        contents: [
+          { type: 'text', text: 'ตรวจเทียบกับ bPlus · รายชื่อ', size: 'xs', color: '#CBD5E1', weight: 'bold', wrap: true },
+          { type: 'text', text: CROSS_CHECK_KIND_LABELS[req.kind], size: 'md', color: '#FFFFFF', weight: 'bold', wrap: true },
+          { type: 'text', text: `${listPeriodLabel(req)} · ${where}`, size: 'xs', color: '#CBD5E1', wrap: true },
+          { type: 'text', text: `ลำดับ ${fmt(from)}-${fmt(to)} จาก ${fmt(total)} ${unit}`, size: 'xs', color: '#CBD5E1', wrap: true }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '16px',
+        paddingTop: '4px',
+        contents: chunk.map((p, j) => personRow(p, from + j, req.kind, multiDay))
+      },
+      ...(nextPage
+        ? {
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              paddingAll: '12px',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'secondary',
+                  height: 'sm',
+                  action: {
+                    type: 'postback',
+                    label: `ถัดไป (${fmt(to + 1)}-${fmt(Math.min(total, to + CROSS_CHECK_LIST_PAGE_SIZE))})`,
+                    data: crossCheckPostbackData({ ...req, page: page + 1 }),
+                    displayText: `ดูรายชื่อต่อ: ${CROSS_CHECK_KIND_LABELS[req.kind]}`
+                  }
+                }
+              ]
+            }
+          }
+        : {})
+    })
+  }
+
+  return {
+    altText: `รายชื่อ ${CROSS_CHECK_KIND_LABELS[req.kind]} · ${listPeriodLabel(req)} · ${where}: ${fmt(total)} ${unit}`,
+    contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles }
+  }
 }
