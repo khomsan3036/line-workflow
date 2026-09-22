@@ -22,6 +22,37 @@ function splitCronList(v: string): string[] {
     .filter(Boolean)
 }
 
+/** ปลายทางการ์ด "สรุปการเข้างาน" 1 รายการใน REPORT_GROUP_IDS */
+export interface ReportTarget {
+  /** groupId (C...) หรือ userId (U...) */
+  id: string
+  /** แผนกที่บังคับไว้ เช่น "C123:Store" (ไม่ได้ตั้ง = เดาจากชื่อกลุ่ม) */
+  department?: string
+  /** "C123:all" = การ์ดภาพรวมทุกแผนก ไม่ต้องเดาจากชื่อกลุ่ม (กลุ่ม HR ที่ต้องเห็นทั้งบริษัท) */
+  overall: boolean
+}
+
+/**
+ * แปลง REPORT_GROUP_IDS เป็นรายการปลายทาง (id ของ LINE ไม่มีเครื่องหมาย : จึงใช้เป็นตัวคั่นได้)
+ *   "C123"            -> เดาแผนกจากชื่อกลุ่ม เช่น QTEC_INTEGRA_STORE -> แผนก Store (ไม่ตรงกับแผนกไหน = การ์ดภาพรวม)
+ *   "C123:Store"      -> บังคับแผนก Store (ใช้เมื่อชื่อกลุ่มสะกดไม่ตรงกับทะเบียน HR)
+ *   "C123:all"        -> การ์ดภาพรวมทุกแผนก
+ */
+function parseReportTargets(v: string | undefined): ReportTarget[] {
+  return list(v)
+    .map((entry) => {
+      const [rawId, ...rest] = entry.split(':')
+      const id = rawId.trim()
+      const value = rest.join(':').trim()
+      if (value === '') return { id, overall: false }
+      if (value.toLowerCase() === 'all') return { id, overall: true }
+      return { id, department: value, overall: false }
+    })
+    .filter((t) => t.id !== '')
+}
+
+const reportTargets = parseReportTargets(process.env.REPORT_GROUP_IDS)
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback
   return value.toLowerCase() === 'true' || value === '1'
@@ -288,10 +319,9 @@ export const config = {
     // เช่น REPORT_CRON=30 10 * * *;0 20 * * *  (ห้ามใช้จุลภาค เพราะ cron ใช้จุลภาคในช่องอยู่แล้ว เช่น 0 10,14 * * *)
     reportCrons: splitCronList(process.env.REPORT_CRON ?? '0 8 * * *'),
     // ปลายทางของการ์ดสรุปการเข้างาน คั่นด้วยจุลภาค (C... = กลุ่ม, U... = ผู้ใช้สำหรับทดสอบ) ว่าง = ใช้ DEFAULT_GROUP_ID
-    reportTargets: (process.env.REPORT_GROUP_IDS ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
+    // ต่อท้ายด้วย :<แผนก> ให้กลุ่มนั้นได้การ์ดเฉพาะแผนกแยกตามตำแหน่ง หรือ :all ให้ได้การ์ดภาพรวม
+    reportTargetList: reportTargets,
+    reportTargets: reportTargets.map((t) => t.id),
     // ช่วงเวลาที่สรุป: today | yesterday | thisWeek | lastWeek | thisMonth | lastMonth
     reportPeriod: (process.env.REPORT_PERIOD ?? 'today').trim(),
     // สถานที่: all | workshop | site

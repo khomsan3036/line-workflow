@@ -10,6 +10,8 @@ import type { LocationFilter, PeriodKey } from '../src/services/attendanceQuery'
 //   npm run attendance-report -- --to=Cxxxx,Uxxxx           ระบุปลายทาง (กลุ่ม C... หรือผู้ใช้ U... ไว้ทดสอบ)
 //   npm run attendance-report -- --period=yesterday         today | yesterday | thisWeek | lastWeek | thisMonth | lastMonth
 //   npm run attendance-report -- --location=workshop        all | workshop | site
+//   npm run attendance-report -- --department=Procurement   การ์ดเฉพาะแผนกนั้น แยกตามตำแหน่ง (เหมือนที่กลุ่มของแผนกได้รับ)
+//                                                           ใส่ต่อท้ายปลายทางก็ได้ เช่น --to=C123:Store,C456:all
 // ---------------------------------------------------------------------------
 
 function arg(name: string): string | undefined {
@@ -25,6 +27,7 @@ async function main(): Promise<void> {
     period: arg('period') as PeriodKey | undefined,
     location: location === 'workshop' ? 'Workshop' : location === 'site' ? 'Site' : location === 'all' ? 'all' : undefined,
     targets: arg('to')?.split(',').map((s) => s.trim()).filter(Boolean),
+    department: arg('department'),
     dryRun,
     sentBy: 'script:attendance-report'
   })
@@ -33,7 +36,7 @@ async function main(): Promise<void> {
     console.log('  [i] ยังไม่ได้ตั้ง DATABASE_URL_MSSQL (ฐานข้อมูลเครื่องสแกนนิ้ว) จึงยังไม่ส่ง\n')
     return
   }
-  if (outcome.summary) printAttendanceReport(outcome)
+  if (outcome.cards.length > 0) printAttendanceReport(outcome)
   if (outcome.sendStatus === 'no-target') {
     console.log('  [i] ไม่มีปลายทาง (ใส่ --to=Cxxxx หรือตั้ง REPORT_GROUP_IDS / DEFAULT_GROUP_ID ใน .env) จึงยังไม่ส่ง\n')
     return
