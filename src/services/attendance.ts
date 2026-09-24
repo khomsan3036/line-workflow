@@ -15,7 +15,10 @@ import { getBplusCrossCheck, type CrossCheckStat } from './attendanceCrossCheck'
 //            ค่าเป็นแผนกจริง เช่น Production, Painting, QA/QC, HSE, IT, HR
 //            (DEPTTAB ของเครื่องสแกนไม่ใช่แผนก แต่เป็นโครงการ/ประเภทค่าจ้าง เช่น "J-400 Di. รายวัน" จึงใช้แค่ดูว่าเป็นผู้รับเหมา)
 //            คนที่ไม่อยู่ในทะเบียน HR: ถ้า DEPTTAB ขึ้นต้น "ผรม." = ผู้รับเหมา -> กลุ่ม "ผู้รับเหมา" ที่เหลือ "ไม่ระบุ"
-//   ตำแหน่ง : AttendancePersonalInfo.PRS_JBT -> JOBTITLE.JBT_KEY (JBT_THAIDESC เช่น Fitter A, Foreman) ครอบคลุมเกือบทุกคน
+//   ตำแหน่ง : MANPOWER_HR.POSITION (join แบบเดียวกับแผนก PRS_NO -> EMP_CODE) ละเอียดกว่าของเครื่องสแกน
+//            เช่น JOBTITLE "Welder" แยกเป็น "Welder Pipe" / "Welder Structure" และคนที่ JOBTITLE เป็น Fitter A แต่ทำงาน Fire Watch
+//            ไม่มีในทะเบียน HR (ส่วนใหญ่ผู้รับเหมา) จึงใช้ AttendancePersonalInfo.PRS_JBT -> JOBTITLE แทน
+//            (ตรวจ 24 ก.ย. 2569 วันที่ 23: HR มีตำแหน่ง 1,701 จาก 1,956 คน รวม JOBTITLE แล้วเหลือไม่ระบุ 4 คน)
 // ข้อควรระวัง: MANPOWER_HR.EMP_CODE เป็น varchar ส่วน PRS_NO เป็น nvarchar ต้อง CAST ให้ชนิดตรงกันและห้ามใช้ OR ใน ON
 // ไม่งั้น join ช้าเกิน 15 วินาที (timeout) - แบบปัจจุบันใช้เวลาราว 0.3 วินาที
 // (ตรวจ 9 ก.ย. 2569: แผนกจับคู่ได้ ~1,750 จาก 2,109 คน ที่เหลือส่วนใหญ่เป็นผู้รับเหมา; ตำแหน่ง 2,103 คน)
@@ -131,6 +134,11 @@ export const UNKNOWN_GROUP = 'ไม่ระบุ'
 export const CONTRACTOR_GROUP = 'ผู้รับเหมา'
 
 /** ชื่อกลุ่มจากฐาน HR มีช่องว่างซ้ำ/ท้ายคำ เช่น "F-401/1    In.รายเดือน" */
+/** ตัวอักษรพิเศษของ LIKE ให้เป็นตัวอักษรธรรมดา (ใช้คู่กับ ESCAPE '\') */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_[]/g, (c) => `\\${c}`)
+}
+
 function cleanGroupName(name: string | null): string {
   const t = (name ?? '').replace(/\s+/g, ' ').trim()
   return t === '' ? UNKNOWN_GROUP : t
@@ -144,16 +152,17 @@ const ENRICHED_SQL = `(
   SELECT a.EnrollNumber, a.CheckDate, a.CheckTimeIn, a.CheckTimeOut, a.LocationIn, a.UpdatedAt,
          COALESCE(NULLIF(LTRIM(RTRIM(m1.DEPT)), ''), NULLIF(LTRIM(RTRIM(m2.DEPT)), ''),
                   CASE WHEN LTRIM(d.DEPT_THAIDESC) LIKE N'ผรม%' THEN N'${CONTRACTOR_GROUP}' END) AS DeptName,
-         ISNULL(NULLIF(LTRIM(RTRIM(j.JBT_THAIDESC)), ''), j.JBT_ENGDESC)                          AS JobName
+         COALESCE(NULLIF(LTRIM(RTRIM(m1.POSITION)), ''), NULLIF(LTRIM(RTRIM(m2.POSITION)), ''),
+                  NULLIF(LTRIM(RTRIM(j.JBT_THAIDESC)), ''), j.JBT_ENGDESC)                     AS JobName
     FROM dbo.AttendanceDaily a
     LEFT JOIN (
           SELECT PRS_E_CARD, MAX(PRS_NO) AS PRS_NO, MAX(PRS_DEPT) AS PRS_DEPT, MAX(PRS_JBT) AS PRS_JBT
             FROM dbo.AttendancePersonalInfo
            GROUP BY PRS_E_CARD
          ) p ON p.PRS_E_CARD = a.EnrollNumber
-    LEFT JOIN (SELECT EMP_CODE, MAX(DEPT) AS DEPT FROM dbo.MANPOWER_HR GROUP BY EMP_CODE) m1
+    LEFT JOIN (SELECT EMP_CODE, MAX(DEPT) AS DEPT, MAX(POSITION) AS POSITION FROM dbo.MANPOWER_HR GROUP BY EMP_CODE) m1
            ON m1.EMP_CODE = CAST(p.PRS_NO AS varchar(50))
-    LEFT JOIN (SELECT EMP_CODE, MAX(DEPT) AS DEPT FROM dbo.MANPOWER_HR GROUP BY EMP_CODE) m2
+    LEFT JOIN (SELECT EMP_CODE, MAX(DEPT) AS DEPT, MAX(POSITION) AS POSITION FROM dbo.MANPOWER_HR GROUP BY EMP_CODE) m2
            ON m2.EMP_CODE = 'S' + CAST(p.PRS_NO AS varchar(50))
     LEFT JOIN dbo.DEPTTAB d ON d.DEPT_KEY = p.PRS_DEPT
     LEFT JOIN dbo.JOBTITLE j ON j.JBT_KEY = p.PRS_JBT
@@ -214,7 +223,8 @@ export async function listDepartments(): Promise<string[]> {
   }
 }
 
-// รายชื่อตำแหน่งจากตารางหลักของเครื่องสแกน (JOBTITLE) cache 10 นาที ให้ parser จับ "ตำแหน่ง Fitter A" ได้
+// รายชื่อตำแหน่ง (ทะเบียน HR ที่ยังทำงาน + JOBTITLE ของเครื่องสแกน ตรงกับที่มาของ JobName) cache 10 นาที
+// ให้ parser จับ "ตำแหน่ง Fitter A" ได้ parser เลือกชื่อยาวก่อน "Welder Pipe" จึงไม่ถูกจับเป็น "Welder"
 let positionsCache: { names: string[]; at: number } | null = null
 
 export async function listPositions(): Promise<string[]> {
@@ -223,6 +233,9 @@ export async function listPositions(): Promise<string[]> {
   try {
     const pool = await getMssqlPool()
     const rows = await pool.request().query<{ Name: string | null }>(`
+      SELECT POSITION AS Name FROM dbo.MANPOWER_HR
+       WHERE STATUS_WORK = 'TRUE' AND POSITION IS NOT NULL AND LTRIM(RTRIM(POSITION)) <> ''
+       UNION
       SELECT ISNULL(NULLIF(LTRIM(RTRIM(JBT_THAIDESC)), ''), JBT_ENGDESC) AS Name
         FROM dbo.JOBTITLE
        WHERE JBT_ENABLED IS NULL OR JBT_ENABLED <> 'N'`)
@@ -247,14 +260,20 @@ export async function getAttendanceSummary(query: AttendanceQuery): Promise<Atte
     'a.CheckDate >= @start AND a.CheckDate <= @end',
     query.location !== 'all' ? 'AND a.LocationIn = @location' : '',
     department !== null ? `AND ${department === UNKNOWN_GROUP ? 'a.DeptName IS NULL' : 'a.DeptName = @department'}` : '',
-    position !== null ? `AND ${position === UNKNOWN_GROUP ? 'a.JobName IS NULL' : 'a.JobName = @position'}` : ''
+    // ชื่อตำแหน่งรวมตำแหน่งย่อยใน HR ด้วย: "Welder" = Welder, Welder Pipe, Welder Structure
+    position !== null
+      ? `AND ${position === UNKNOWN_GROUP ? 'a.JobName IS NULL' : "(a.JobName = @position OR a.JobName LIKE @positionPrefix ESCAPE '\\')"}`
+      : ''
   ].join(' ')
 
   const newRequest = () => {
     const r = pool.request().input('start', sql.Date, start).input('end', sql.Date, end)
     if (query.location !== 'all') r.input('location', sql.NVarChar(100), query.location)
     if (department !== null) r.input('department', sql.NVarChar(100), department)
-    if (position !== null) r.input('position', sql.NVarChar(200), position)
+    if (position !== null) {
+      r.input('position', sql.NVarChar(200), position)
+      r.input('positionPrefix', sql.NVarChar(210), `${escapeLike(position)} %`)
+    }
     return r
   }
 
