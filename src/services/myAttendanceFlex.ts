@@ -1,5 +1,5 @@
 import { dayOfWeek, formatThaiDateShort, nowTimeLocal, type DatePeriod, type PeriodKey } from './attendanceQuery'
-import type { EmployeeInfo, TimeRecord } from './manpowerApi'
+import { isLeaveShiftCode, type EmployeeInfo, type TimeRecord } from './manpowerApi'
 
 // ---------------------------------------------------------------------------
 // Flex Message "เวลาเข้างานของฉัน" (time attendance รายบุคคล)
@@ -118,6 +118,8 @@ export function evaluateDay(record: TimeRecord, today: string): DayView {
 function statusLabel(view: DayView): string {
   const meta = STATUS_META[view.status]
   if (view.status === 'late') return `สาย ${view.lateMinutes} นาที`
+  // บอกประเภทการลาตามรหัสกะของ bPlus เช่น "ลากิจจ่าย" แทนคำว่า "ลา" เฉย ๆ
+  if (view.status === 'leave' && isLeaveShiftCode(view.record.shiftCode)) return view.record.shiftCode!.trim()
   if (view.status === 'inProgress' && view.lateMinutes > 0) return `กำลังทำงาน · สาย ${view.lateMinutes} น.`
   if (view.status === 'noOut' && view.lateMinutes > 0) return `ไม่ได้สแกนออก · สาย ${view.lateMinutes} น.`
   return meta.label
