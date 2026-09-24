@@ -11,7 +11,7 @@ import {
 } from '../line/client'
 import { listRecentConversation, saveDirectMessage } from './directMessages'
 import { upsertGroup } from './groups'
-import { groupNameIfMissing, recordGroupMessage } from './groupMessages'
+import { groupNameToSave, recordGroupMessage } from './groupMessages'
 import { handleUnsend } from './unsend'
 import { answerMaintenanceQuestion } from './maintenanceAgent'
 import { buildMaintenanceCard, buildQuickReply, buildWelcomeCard, type AgentReply } from './maintenanceFlex'
@@ -222,7 +222,7 @@ export async function handleMaintenanceEvent(event: WebhookEvent): Promise<void>
   //    ก็ต้องถูกบันทึกเหมือนกัน)
   if (event.source.type === 'group') {
     const groupId = event.source.groupId
-    const known = await groupNameIfMissing(groupId, CHANNEL)
+    const known = await groupNameToSave(groupId, CHANNEL)
     await recordGroupMessage(event, groupId, CHANNEL, { isActive: true, groupName: known })
   }
 

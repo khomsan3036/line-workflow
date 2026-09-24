@@ -63,15 +63,26 @@ export async function saveMessage(record: MessageRecord): Promise<'inserted' | '
   }
 }
 
+/** ตรวจชื่อกลุ่มกับ LINE ซ้ำได้ทุกกี่มิลลิวินาทีต่อกลุ่ม (ต่อโปรเซส) */
+const GROUP_NAME_REFRESH_MS = 60 * 60 * 1000
+const groupNameCheckedAt = new Map<string, number>()
+
 /**
- * ถ้ากลุ่มนี้ยังไม่มีชื่อในทะเบียน (บอทถูกเชิญเข้ากลุ่มก่อนระบบรัน หรือ join handler รุ่นเก่าไม่ได้เก็บชื่อ)
- * ให้ดึงชื่อจาก LINE มาตั้งให้ คืนชื่อที่ได้ หรือ null เมื่อมีอยู่แล้ว/ดึงไม่ได้
- * ชื่อกลุ่มสำคัญกับการ์ดสรุปประชุมและหน้า dashboard ไม่งั้นจะเห็นแต่ Cxxxx
+ * ชื่อกลุ่มที่ควรบันทึกลงทะเบียน: ยังไม่มีชื่อ (บอทถูกเชิญก่อนระบบรัน หรือ join handler รุ่นเก่าไม่ได้เก็บ)
+ * หรือไม่ได้ตรวจกับ LINE มาเกิน 1 ชั่วโมง ให้ดึงชื่อปัจจุบันจาก LINE คืน null เมื่อไม่ต้องอัปเดต/ดึงไม่ได้
+ * LINE ไม่มี event แจ้งเปลี่ยนชื่อกลุ่ม ต้องถามเองเป็นระยะ ไม่งั้นชื่อเก่าค้างตลอด
+ * (พบ 2026-09-24: QTEC_WELD เปลี่ยนเป็น QTEC_INTEGRA_QAQC แล้ว แต่ระบบยังเป็นชื่อเดิม)
+ * ชื่อกลุ่มสำคัญกับการ์ดสรุปประชุม หน้า dashboard และการเลือกแผนกของการ์ดเข้างาน (REPORT_GROUP_IDS)
  */
-export async function groupNameIfMissing(groupId: string, channel: ChannelKey): Promise<string | null> {
+export async function groupNameToSave(groupId: string, channel: ChannelKey): Promise<string | null> {
   const existing = await getGroup(groupId)
-  if (existing?.group_name) return null
-  return getGroupName(groupId, channel)
+  const checkedAt = groupNameCheckedAt.get(groupId) ?? 0
+  if (existing?.group_name && Date.now() - checkedAt < GROUP_NAME_REFRESH_MS) return null
+  groupNameCheckedAt.set(groupId, Date.now())
+  const current = await getGroupName(groupId, channel)
+  if (!current || current === existing?.group_name) return null
+  if (existing?.group_name) console.log(`[กลุ่ม] ชื่อกลุ่มเปลี่ยน ${groupId}: ${existing.group_name} -> ${current}`)
+  return current
 }
 
 export interface RecordedGroupMessage {
@@ -101,7 +112,7 @@ export async function recordGroupMessage(
 
   const messageText = message.type === 'text' ? message.text : null
 
-  const groupName = groupPatch.groupName ?? (await groupNameIfMissing(groupId, channel))
+  const groupName = groupPatch.groupName ?? (await groupNameToSave(groupId, channel))
   await upsertGroup(groupId, { touchLastMessage: true, channel, ...groupPatch, groupName })
   await saveMessage({
     lineMessageId: message.id,
