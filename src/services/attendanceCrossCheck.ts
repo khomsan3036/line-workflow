@@ -87,22 +87,34 @@ async function crossCheckRequest(scope: CrossCheckScope) {
  * PERSONALINFO อาจมีหลายแถวต่อ PRS_EMP (หลาย PRS_NO) จึงรวมเหลือแถวเดียวก่อน join ไม่ให้นับซ้ำ
  * เมื่อกรองสถานที่ นับคนตามสถานที่สแกนนิ้วก่อน (ตรงกับยอดบนการ์ด) ไม่มีสแกนจึงใช้สถานที่ใน bPlus
  * คนที่สองระบบบันทึกคนละสถานที่จึงถูกนับที่เดียว (Site + Workshop = ทุกสถานที่ ไม่นับซ้ำ)
+ *
+ * ดึงแถวของช่วงวันที่ลง temp table (#bpRaw, #scan) ก่อน join เสมอ: วันล่าสุด (วันนี้/เมื่อวาน) อยู่เลย histogram
+ * ของสถิติ TMT_DATE/CheckDate ที่ยังไม่อัปเดต SQL Server จึงเดาว่ามีราว 1 แถว แล้วเลือก nested loop กับหลายพันแถว
+ * ทำให้ query เกิน requestTimeout 15 วินาที การ์ดจึงไม่มีส่วน bPlus (พบ 2026-09-24: วันที่ 23 ใช้ 15 วิขึ้นไป วันก่อนหน้าไม่ถึง 1 วิ)
+ * temp table มีสถิติของจริง plan จึงถูกต้องทุกวัน ใช้ได้เพราะ prelude กับ SELECT อยู่ใน batch เดียวกัน
  */
 function pairsCte(byLocation: boolean): string {
   return `
-    WITH pinfo AS (
-      SELECT Location, PRS_EMP, MAX(NULLIF(LTRIM(RTRIM(PRS_E_CARD)), '')) AS Card
-        FROM dbo.AttendancePersonalInfo
-       GROUP BY Location, PRS_EMP
-    ),
-    bpRaw AS (
-      SELECT t.Location, t.TMT_DATE AS D, p.Card,
-             COALESCE(t.TMT_STAMP_IN, t.TMT_STAMP_1) AS TimeIn,
-             COALESCE(t.UpdatedAt, t.SyncedAt)      AS SyncedAt
-        FROM dbo.AttendanceTmTran t
-        LEFT JOIN pinfo p ON p.Location = t.Location AND p.PRS_EMP = t.TMT_EMP
-       WHERE t.TMT_DATE >= @start AND t.TMT_DATE <= @end
-         AND COALESCE(t.TMT_STAMP_IN, t.TMT_STAMP_OUT, t.TMT_STAMP_1) IS NOT NULL
+    SET NOCOUNT ON;
+    SELECT t.Location, t.TMT_DATE AS D, p.Card,
+           COALESCE(t.TMT_STAMP_IN, t.TMT_STAMP_1) AS TimeIn,
+           COALESCE(t.UpdatedAt, t.SyncedAt)      AS SyncedAt
+      INTO #bpRaw
+      FROM dbo.AttendanceTmTran t
+      LEFT JOIN (
+        SELECT Location, PRS_EMP, MAX(NULLIF(LTRIM(RTRIM(PRS_E_CARD)), '')) AS Card
+          FROM dbo.AttendancePersonalInfo
+         GROUP BY Location, PRS_EMP
+      ) p ON p.Location = t.Location AND p.PRS_EMP = t.TMT_EMP
+     WHERE t.TMT_DATE >= @start AND t.TMT_DATE <= @end
+       AND COALESCE(t.TMT_STAMP_IN, t.TMT_STAMP_OUT, t.TMT_STAMP_1) IS NOT NULL;
+    SELECT EnrollNumber, CheckDate AS D, LocationIn AS Loc,
+           CAST(CheckDate AS datetime) + CAST(CheckTimeIn AS datetime) AS TimeIn
+      INTO #scan
+      FROM dbo.AttendanceDaily
+     WHERE CheckDate >= @start AND CheckDate <= @end;
+    WITH bpRaw AS (
+      SELECT * FROM #bpRaw
     ),
     bpDays AS (
       SELECT DISTINCT D FROM bpRaw ${byLocation ? 'WHERE Location = @location' : ''}
@@ -114,10 +126,7 @@ function pairsCte(byLocation: boolean): string {
        GROUP BY Card, D
     ),
     scan AS (
-      SELECT EnrollNumber, CheckDate AS D, LocationIn AS Loc,
-             CAST(CheckDate AS datetime) + CAST(CheckTimeIn AS datetime) AS TimeIn
-        FROM dbo.AttendanceDaily
-       WHERE CheckDate >= @start AND CheckDate <= @end
+      SELECT * FROM #scan
     ),
     pairs AS (
       SELECT s.EnrollNumber AS ScanEmp, b.EnrollNumber AS BpEmp, s.TimeIn AS ScanIn, b.TimeIn AS BpIn,
