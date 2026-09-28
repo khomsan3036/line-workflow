@@ -18,7 +18,11 @@ export async function getMssqlPool(): Promise<sql.ConnectionPool> {
   if (!mssqlEnabled()) throw new Error('ยังไม่ได้ตั้งค่า DATABASE_URL_MSSQL')
 
   if (!poolPromise) {
-    poolPromise = new sql.ConnectionPool(config.mssqlConnectionString)
+    const poolConfig = sql.ConnectionPool.parseConnectionString(config.mssqlConnectionString)
+    // ค่าเริ่มต้นของ mssql คือ 15 วินาที เผื่อคำสั่งรายงานที่อ่านหลายวันไว้ 30 วินาที
+    // (ตั้ง "Request Timeout=..." ใน DATABASE_URL_MSSQL เองได้ ค่านั้นมาก่อน)
+    poolConfig.requestTimeout ??= 30000
+    poolPromise = new sql.ConnectionPool(poolConfig)
       .connect()
       .then((pool) => {
         pool.on('error', (err) => {

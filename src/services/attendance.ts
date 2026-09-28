@@ -147,6 +147,10 @@ function cleanGroupName(name: string | null): string {
 /**
  * ตารางเข้างานที่เติมชื่อแผนก (DeptName) และตำแหน่ง (JobName) ให้แต่ละแถว
  * ใช้เฉพาะเมื่อต้องแยกกลุ่มหรือกรองแผนก เพราะ join ทะเบียนพนักงานช้ากว่าอ่านตารางตรง ๆ
+ *
+ * กรองช่วงวันที่ (@start/@end) ก่อน join เสมอ: ถ้าปล่อยให้ SQL Server ดันเงื่อนไขเข้าไปเอง
+ * คำสั่ง GROUP BY JobName ได้แผนที่แย่มาก (วันจันทร์ 28 ก.ย. 2569 ใช้ ~15 วินาที ชน requestTimeout
+ * จนการ์ดรายแผนกของ REPORT_CRON ส่งไม่ออก) กรองก่อนเหลือ ~0.3 วินาที
  */
 const ENRICHED_SQL = `(
   SELECT a.EnrollNumber, a.CheckDate, a.CheckTimeIn, a.CheckTimeOut, a.LocationIn, a.UpdatedAt,
@@ -154,7 +158,7 @@ const ENRICHED_SQL = `(
                   CASE WHEN LTRIM(d.DEPT_THAIDESC) LIKE N'ผรม%' THEN N'${CONTRACTOR_GROUP}' END) AS DeptName,
          COALESCE(NULLIF(LTRIM(RTRIM(m1.POSITION)), ''), NULLIF(LTRIM(RTRIM(m2.POSITION)), ''),
                   NULLIF(LTRIM(RTRIM(j.JBT_THAIDESC)), ''), j.JBT_ENGDESC)                     AS JobName
-    FROM dbo.AttendanceDaily a
+    FROM (SELECT * FROM dbo.AttendanceDaily WHERE CheckDate >= @start AND CheckDate <= @end) a
     LEFT JOIN (
           SELECT PRS_E_CARD, MAX(PRS_NO) AS PRS_NO, MAX(PRS_DEPT) AS PRS_DEPT, MAX(PRS_JBT) AS PRS_JBT
             FROM dbo.AttendancePersonalInfo

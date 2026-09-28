@@ -162,6 +162,25 @@ interface LogEntry {
   channel: ChannelKey
 }
 
+/**
+ * บันทึกแถว failed ของข้อความที่ประกอบไม่สำเร็จจึงไม่ได้ส่ง (เช่น อ่านฐานข้อมูลไม่ทัน)
+ * ให้หน้าประวัติการส่งเห็นว่างานตั้งเวลาทำงานแล้วแต่พัง แทนที่จะเงียบหายไป
+ */
+export async function logFailedSend(req: Omit<SendRequest, 'dryRun' | 'contents'> & { error: string }): Promise<number | null> {
+  return insertLog({
+    targetType: req.targetType,
+    targetId: req.targetId ?? null,
+    targetName: req.targetName ?? null,
+    kind: req.kind,
+    preview: (req.text ?? req.altText ?? '').slice(0, 500),
+    payload: null,
+    status: 'failed',
+    error: req.error,
+    sentBy: req.sentBy,
+    channel: req.channel ?? 'hr'
+  })
+}
+
 /** บันทึกลง message_logs - ถ้า DB พังก็แค่ log ไว้ ไม่ throw เพราะข้อความส่งออกไปแล้ว */
 async function insertLog(entry: LogEntry): Promise<number | null> {
   try {

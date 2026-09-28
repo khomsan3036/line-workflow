@@ -10,7 +10,7 @@ import {
   type PeriodKey
 } from '../services/attendanceQuery'
 import { getGroup } from '../services/groups'
-import { sendAndLog } from '../services/messaging'
+import { logFailedSend, sendAndLog } from '../services/messaging'
 
 // ---------------------------------------------------------------------------
 // งาน: ส่งการ์ด "สรุปการเข้างาน" (จำนวนพนักงานสแกนเข้างาน จากเครื่องสแกนนิ้ว) เข้ากลุ่มตามเวลาที่ตั้ง
@@ -51,7 +51,9 @@ export interface AttendanceReportTarget {
 /** การ์ดหนึ่งใบ (หนึ่งคำถาม) พร้อมปลายทางที่ได้รับใบนี้ */
 export interface AttendanceReportCard {
   query: AttendanceQuery
-  summary: AttendanceSummary
+  /** null = อ่านข้อมูลไม่สำเร็จ การ์ดใบนี้ไม่ได้ส่ง (ดู error) แต่ใบอื่นยังส่งตามปกติ */
+  summary: AttendanceSummary | null
+  error?: string
   targets: AttendanceReportTarget[]
 }
 
@@ -150,11 +152,37 @@ export async function runAttendanceReport(options: AttendanceReportOptions = {})
     const query: AttendanceQuery = bucket.department
       ? { period, location, groupBy: 'position', department: bucket.department }
       : { period, location, groupBy: 'location' }
-    const summary = await getAttendanceSummary(query)
+
+    const targets: AttendanceReportTarget[] = []
+    let summary: AttendanceSummary
+    try {
+      summary = await getAttendanceSummary(query)
+    } catch (err) {
+      // การ์ดใบหนึ่งพัง (เช่น SQL Server ตอบไม่ทัน) ต้องไม่ทำให้ใบอื่นไม่ได้ส่ง
+      // บันทึก failed ให้ทุกปลายทางของใบนี้ หน้าประวัติการส่งจึงเห็นว่ารอบนี้ขาดไป
+      const error = `อ่านข้อมูลการเข้างานไม่สำเร็จ: ${err instanceof Error ? err.message : String(err)}`
+      console.error(`[attendance-report] ${bucket.department ? `แผนก ${bucket.department}` : 'ภาพรวม'}: ${error}`)
+      for (const t of bucket.targets) {
+        if (!dryRun) {
+          await logFailedSend({
+            targetType: t.target.id.startsWith('U') ? 'user' : 'group',
+            targetId: t.target.id,
+            targetName: t.name,
+            kind: 'flex',
+            altText: `สรุปการเข้างาน ${period.label}${bucket.department ? ` แผนก ${bucket.department}` : ''}`,
+            error,
+            sentBy,
+            channel: t.channel
+          })
+        }
+        targets.push({ id: t.target.id, name: t.name, status: 'failed', error })
+      }
+      cards.push({ query, summary: null, error, targets })
+      continue
+    }
     const altText = attendanceAltText(summary)
     const contents = summary.totalPeople > 0 ? flexAttendanceSummary(summary, todayLocal()) : flexAttendanceEmpty(query)
 
-    const targets: AttendanceReportTarget[] = []
     for (const t of bucket.targets) {
       const result = await sendAndLog({
         targetType: t.target.id.startsWith('U') ? 'user' : 'group',
@@ -186,9 +214,14 @@ export async function runAttendanceReport(options: AttendanceReportOptions = {})
 /** พิมพ์สรุปลง console (ใช้ทั้ง CLI และ log ของ scheduler) */
 export function printAttendanceReport(outcome: AttendanceReportOutcome): void {
   const label = (s: string) => (outcome.sendStatus === 'dry-run' ? 'dry-run (ไม่ส่งจริง)' : s)
-  for (const { query, summary, targets } of outcome.cards) {
+  for (const { query, summary, error, targets } of outcome.cards) {
     const scope = query.department ? `แผนก ${query.department} · ตามตำแหน่ง` : 'ทุกแผนก · ตามสถานที่'
     console.log(`  ช่วงเวลา : ${query.period.label} · ${query.location === 'all' ? 'ทุกสถานที่' : query.location} · ${scope}`)
+    if (!summary) {
+      console.log(`  ผิดพลาด  : ${error ?? 'อ่านข้อมูลไม่สำเร็จ'}`)
+      for (const t of targets) console.log(`  -> ${t.name}: ${t.status}`)
+      continue
+    }
     console.log(`  สแกนเข้า : ${summary.totalPeople.toLocaleString('th-TH')} คน (ออกแล้ว ${summary.totalCheckedOut.toLocaleString('th-TH')})`)
     if (query.department) {
       for (const g of summary.byGroup.slice(0, 5)) console.log(`    - ${g.name}: ${g.people} คน`)
