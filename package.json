@@ -21,6 +21,7 @@
     "daily-report": "tsx scripts/daily-report.ts",
     "attendance-report": "tsx scripts/attendance-report.ts",
     "mt-report": "tsx scripts/mt-report.ts",
+    "ot-report": "tsx scripts/ot-report.ts",
     "seed:media": "tsx scripts/seed-media.ts",
     "media:cleanup": "tsx scripts/media-cleanup.ts",
     "mt:publish-test": "tsx scripts/publish-maintenance-event.ts"

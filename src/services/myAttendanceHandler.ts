@@ -182,8 +182,8 @@ async function buildVerifyCard(userId: string, reason: 'follow' | 'ask') {
   }
 }
 
-/** ตอบการ์ดยืนยันตัวตนผ่าน reply token (ตอนผู้ใช้ถามเวลาเข้างาน) */
-async function replyVerifyCard(input: MyAttendanceInput): Promise<MyAttendanceResult> {
+/** ตอบการ์ดยืนยันตัวตนผ่าน reply token (ตอนผู้ใช้ถามเวลาเข้างาน หรือ "OT ของฉัน") */
+export async function replyVerifyCard(input: MyAttendanceInput): Promise<MyAttendanceResult> {
   if (!config.lineLogin.enabled) return replyText(input, NOT_CONFIGURED_TEXT, 'my-attendance:not-configured')
   const card = await buildVerifyCard(input.userId, 'ask')
   const result = await replyAndLog({

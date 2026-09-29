@@ -7,6 +7,7 @@ import { replyAndLog } from '../services/messaging'
 import { saveDirectMessage } from '../services/directMessages'
 import { handleAttendanceQuestion } from '../services/attendanceHandler'
 import { handleMyAttendance, replyVerifyOnFollow } from '../services/myAttendanceHandler'
+import { handleOvertimeQuestion } from '../services/overtimeHandler'
 import {
   addressedToBot,
   answerMaintenanceMessage,
@@ -250,13 +251,16 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     const userId = event.source.userId
     const text = event.message.type === 'text' ? event.message.text : null
 
-    // ลำดับการตอบ: เวลาเข้างานของฉัน -> สรุปพนักงานทั้งหมด -> เมนู -> แชทบอทซ่อมบำรุง (เมื่อใช้ OA ร่วมกัน) -> fallback
+    // ลำดับการตอบ: OT ของฉัน -> เวลาเข้างานของฉัน -> สรุปพนักงานทั้งหมด -> เมนู -> แชทบอทซ่อมบำรุง (เมื่อใช้ OA ร่วมกัน) -> fallback
     let replyText: string | null = null
     let matched: boolean | null = null
 
     if (text !== null) {
-      const mine = await handleMyAttendance({ text, replyToken: event.replyToken, userId })
-      const attendance = mine
+      // OT ก่อน "เวลาเข้างานของฉัน" เพราะ "OT ของฉัน" มีคำว่า "ของฉัน" ซึ่ง handleMyAttendance ก็รับด้วย
+      // (แชท 1:1 ดูได้เฉพาะ OT ของตัวเอง ไม่เห็นอันดับ)
+      const overtime = await handleOvertimeQuestion({ text, replyToken: event.replyToken, targetType: 'user', targetId: userId })
+      const mine = overtime ? null : await handleMyAttendance({ text, replyToken: event.replyToken, userId })
+      const attendance = mine || overtime
         ? null
         : await handleAttendanceQuestion({
             text,
@@ -265,7 +269,11 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
             targetId: userId
           })
 
-      if (mine) {
+      if (overtime) {
+        replyText = overtime.summaryText
+        matched = true
+        console.log(`[แชท 1:1] "${text}" -> ตอบ OT ของฉัน`)
+      } else if (mine) {
         replyText = mine.summaryText
         matched = true
         console.log(`[แชท 1:1] "${text}" -> ตอบเวลาเข้างานของฉัน`)
@@ -323,8 +331,18 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
   // บันทึกข้อความ + เก็บไฟล์สื่อ (โค้ดร่วมกับ OA ทีมซ่อมบำรุง อยู่ใน services/groupMessages.ts)
   const { groupId, messageText } = await recordGroupMessage(event, event.source.groupId, 'hr')
 
-  // ในกลุ่มก็ถามสรุปเข้างานได้ (ตอบเฉพาะเมื่อข้อความเป็นคำถามเรื่องนี้ ไม่รบกวนแชทปกติ)
+  // ในกลุ่มก็ถามสรุปเข้างาน / Top OT ได้ (ตอบเฉพาะเมื่อข้อความเป็นคำถามเรื่องนี้ ไม่รบกวนแชทปกติ)
   if (messageText !== null) {
+    const overtime = await handleOvertimeQuestion({
+      text: messageText,
+      replyToken: event.replyToken,
+      targetType: 'group',
+      targetId: groupId
+    })
+    if (overtime) {
+      console.log(`[กลุ่ม] "${messageText}" -> ตอบเรื่อง OT`)
+      return
+    }
     const attendance = await handleAttendanceQuestion({
       text: messageText,
       replyToken: event.replyToken,
@@ -386,6 +404,11 @@ async function answerAddressedGroupMessage(params: {
   }
 
   if (topic === 'hr' && question !== '') {
+    const overtime = await handleOvertimeQuestion({ text: question, replyToken, targetType: 'group', targetId: groupId, addressed: true })
+    if (overtime) {
+      console.log(`[กลุ่ม] "${shown}" -> ตอบเรื่อง OT`)
+      return
+    }
     const attendance = await handleAttendanceQuestion({ text: question, replyToken, targetType: 'group', targetId: groupId })
     if (attendance) {
       console.log(`[กลุ่ม] "${shown}" -> ตอบสรุปเข้างาน`)

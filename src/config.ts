@@ -336,7 +336,26 @@ export const config = {
     mtReportTargets: (process.env.MT_REPORT_GROUP_IDS ?? '')
       .split(',')
       .map((s) => s.trim())
-      .filter(Boolean)
+      .filter(Boolean),
+
+    // การ์ด "Top OT สะสม" แยก Workshop / Site (ข้อมูล OT จาก bPlus)
+    //   OT_REPORT_CRON = ค่าเริ่มต้นทุกวันจันทร์ 10:30 (หลัง sync bPlus รอบ 10:00 ข้อมูลวันอาทิตย์เข้าครบ) ว่าง = ปิด
+    //   OT_REPORT_GROUP_IDS = ปลายทางคั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ไม่ส่ง
+    //   OT_REPORT_PERIOD = lastWeek (สัปดาห์ที่แล้ว จ-อา) | thisWeek | lastMonth | thisMonth
+    //   OT_REPORT_TOP = จำนวนอันดับต่อสถานที่ (ค่าเริ่มต้น 10)
+    otReportCron: (process.env.OT_REPORT_CRON ?? '30 10 * * 1').trim(),
+    otReportTargets: (process.env.OT_REPORT_GROUP_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    otReportPeriod: (process.env.OT_REPORT_PERIOD ?? 'lastWeek').trim(),
+    otReportTop: Math.min(10, Math.max(1, Number(process.env.OT_REPORT_TOP) || 10)),
+    // กลุ่มที่ถามบอทดูอันดับ "OT สัปดาห์นี้" ได้ (ชื่อ + ชั่วโมง OT ของพนักงาน จึงจำกัดผู้ดู) ว่าง = กลุ่ม C... ใน OT_REPORT_GROUP_IDS
+    // แชท 1:1 ไม่เห็นอันดับ ดูได้เฉพาะ OT ของตัวเอง (ต้องยืนยันตัวตนผ่าน LINE Login)
+    otAllowedGroupIds: (process.env.OT_ALLOWED_GROUP_IDS || process.env.OT_REPORT_GROUP_IDS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith('C'))
   }
 }
 

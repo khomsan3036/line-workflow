@@ -3,6 +3,7 @@ import { config } from './config'
 import { runDailySummary } from './jobs/dailySummary'
 import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceReport'
 import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
+import { runOvertimeReport } from './jobs/overtimeReport'
 
 // ---------------------------------------------------------------------------
 // ตัวตั้งเวลาในตัวโปรแกรม (in-process scheduler)
@@ -73,6 +74,35 @@ export function startScheduler(): void {
       { timezone: tz }
     )
     console.log(`[scheduler] ตั้งงานสรุปการเข้างานไว้ที่ "${reportCron}" (${tz})`)
+  }
+
+  // การ์ด "Top OT สะสม" (ค่าเริ่มต้นทุกวันจันทร์ 10:30 สรุปสัปดาห์ที่แล้ว) ว่าง = ปิด
+  const otCron = config.scheduler.otReportCron
+  if (otCron && !cron.validate(otCron)) {
+    console.error(`[scheduler] รูปแบบ OT_REPORT_CRON ไม่ถูกต้อง: ${otCron}`)
+  } else if (otCron) {
+    cron.schedule(
+      otCron,
+      async () => {
+        console.log(`[scheduler] เริ่มงาน Top OT ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        try {
+          const outcome = await runOvertimeReport({ sentBy: 'scheduler:ot-report' })
+          if (outcome.sendStatus === 'not-configured') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง DATABASE_URL_MSSQL')
+            return
+          }
+          if (outcome.sendStatus === 'no-target') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง OT_REPORT_GROUP_IDS')
+            return
+          }
+          for (const t of outcome.targets) console.log(`[scheduler]   Top OT -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งาน Top OT ผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงาน Top OT ไว้ที่ "${otCron}" (${tz}) -> ${config.scheduler.otReportTargets.length} ปลายทาง`)
   }
 
   // OA ทีมซ่อมบำรุง: การ์ด "งานซ่อมค้างวันนี้" และ "แจ้งเตือนงานซ่อมเร่งด่วน" (ว่าง = ปิดงานนั้น)
