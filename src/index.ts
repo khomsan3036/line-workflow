@@ -13,6 +13,7 @@ import { startScheduler } from './scheduler'
 import { maintenanceMcpStatus } from './services/maintenanceMcp'
 import { attendanceAvailable, crossCheckHealth } from './services/attendance'
 import { maintenanceEventsStatus, startMaintenanceEventConsumer } from './services/maintenanceEvents'
+import { complaintEventsStatus, startComplaintEventConsumer } from './services/complaintEvents'
 
 // ---------------------------------------------------------------------------
 // โครงสร้าง 2 ชั้น
@@ -156,6 +157,7 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
       : 'off',
     // การเข้างาน: บอกด้วยว่าการตรวจเทียบกับ bPlus ครั้งล่าสุดผ่านหรือไม่ (การ์ดจะไม่มีส่วนนั้นเมื่อไม่ผ่าน)
     attendance: attendanceAvailable() ? { crossCheck: crossCheckHealth() } : 'off',
+    complaint: complaintEventsStatus(),
     basePath: config.basePath || '/'
   })
 }
@@ -289,6 +291,8 @@ async function start(): Promise<void> {
     if (db.ok) startScheduler()
     // รับ event จากระบบซ่อมบำรุงผ่าน RabbitMQ แล้วแจ้งเข้าไลน์กลุ่มด้วย OA MT
     if (db.ok && config.maintenance.enabled) startMaintenanceEventConsumer()
+    // รับ event จากระบบรับเรื่องร้องเรียนผ่าน RabbitMQ แล้วส่งการ์ดด้วย OA HR (complaint.v1)
+    if (db.ok) startComplaintEventConsumer()
   })
 }
 

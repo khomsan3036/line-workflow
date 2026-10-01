@@ -4,7 +4,7 @@ import { config } from '../config'
 import { getQuota } from '../line/client'
 import { setFlash, takeFlash } from '../middleware/auth'
 import { flexAnnouncement, flexDailySummary, flexExecutiveReport, flexTaskReminder } from '../services/flex'
-import { defaultGroupId, listGroups, updateGroup, upsertGroup } from '../services/groups'
+import { defaultGroupId, listActiveGroups, listGroups, updateGroup, upsertGroup } from '../services/groups'
 import {
   fetchMessagesForExport,
   messagesOfDay,
@@ -656,6 +656,17 @@ export function createAdminRouter(): Router {
       messageTypeBreakdown(group)
     ])
     res.json({ daily, hourly, talkers, types })
+  })
+
+  // -------------------------------------------------------------------------
+  // 12) ทะเบียนกลุ่มที่ OA HR อยู่ สำหรับระบบอื่นเลือกปลายทาง (เช่น หน้าตั้งค่าผู้รับเรื่องของ complaint-system)
+  //     อยู่หลัง requireLogin เหมือนทุกหน้า: ระบบที่เรียกต้องส่ง cookie session ของ admin มา
+  //     หรือ (ง่ายกว่าสำหรับ server-to-server) ตั้ง GROUPS_API_TOKEN แล้วส่ง X-Api-Token
+  // -------------------------------------------------------------------------
+  router.get('/api/groups', async (req: Request, res: Response) => {
+    const channel = str(req.query.channel) === 'mt' ? 'mt' : 'hr'
+    const groups = await listActiveGroups(channel)
+    res.json(groups.map((g) => ({ groupId: g.group_id, groupName: g.group_name, memberCount: g.member_count, channel: g.channel })))
   })
 
   return router
