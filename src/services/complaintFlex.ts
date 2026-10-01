@@ -335,33 +335,136 @@ export function buildReporterUpdateCard(e: { ticketNo: string; toStatusTh: strin
   return { contents, altText: `📣 ${e.ticketNo}: ${e.toStatusTh}`.slice(0, 400) }
 }
 
-/** การ์ดสรุปเรื่องค้าง (งานตั้งเวลา) */
+/**
+ * การ์ดสรุปเรื่องค้าง (งานตั้งเวลา) — ดีไซน์ใหม่
+ *   - หัวการ์ดโทนเข้ม + ป้ายสถานะรวม ("เรียบร้อย / ต้องจับตา / ต้องรีบจัดการ") อ่านรู้เรื่องใน 1 วินาที
+ *   - ตัวเลขหลัก 3 ช่องเป็น tile สีอ่อน ตัวเลขใหญ่ สีตามความหมาย (ไม่มีขอบ ไม่มีเส้น)
+ *   - แถบสัดส่วน "รับเรื่องแล้ว" แบบ filler (ไม่ใช้ box ว่าง ซึ่ง LINE for PC จะยืดจนการ์ดพัง)
+ *   - ตามหมวด = ชื่อ + chip ตัวเลขชิดขวา · เกินกำหนด = รายการการ์ดย่อยพื้นแดงอ่อน
+ *   - สถานะ "ไม่มีเรื่องค้าง" มีหน้าตาเฉพาะ ไม่ใช่ตารางว่าง
+ */
 export function buildComplaintDigestCard(d: {
   asOf: string; open: number; newToday: number; resolvedToday: number; unacknowledged: number; overdue: number
   byCategory: { category: string; count: number }[]
   overdueItems: { ticketNo: string; status: string; cat: string; assigneeName: string | null; vehiclePlate: string | null; severity: string; dueAt: string }[]
   consoleUrl: string
 }): { contents: unknown; altText: string } {
-  const tone = d.overdue > 0 ? '#B91C1C' : d.unacknowledged > 0 ? '#B45309' : '#047857'
-  const metric = (label: string, value: number, color: string) => ({
-    type: 'box', layout: 'vertical', flex: 1, backgroundColor: CARD, cornerRadius: '8px', paddingAll: '8px',
-    contents: [{ type: 'text', text: String(value), size: 'xl', weight: 'bold', color, align: 'center', wrap: true }, { type: 'text', text: label, size: 'xxs', color: MUTED, align: 'center', wrap: true }]
+  const level = d.overdue > 0 ? 'bad' : d.unacknowledged > 0 ? 'warn' : 'good'
+  const theme = {
+    good: { bg: '#047857', label: 'เรียบร้อย', icon: '✅', soft: '#ECFDF5', fg: '#047857' },
+    warn: { bg: '#B45309', label: 'ต้องจับตา', icon: '👀', soft: '#FFFBEB', fg: '#B45309' },
+    bad: { bg: '#B91C1C', label: 'ต้องรีบจัดการ', icon: '🚨', soft: '#FEF2F2', fg: '#B91C1C' }
+  }[level]
+  const acked = Math.max(0, d.open - d.unacknowledged)
+  const pct = d.open > 0 ? Math.round((acked / d.open) * 100) : 100
+
+  const tile = (value: number, label: string, fg: string, bg: string) => ({
+    type: 'box', layout: 'vertical', flex: 1, backgroundColor: bg, cornerRadius: '12px', paddingAll: '12px', spacing: 'none',
+    contents: [
+      { type: 'text', text: String(value), size: 'xxl', weight: 'bold', color: fg, align: 'center', wrap: true },
+      { type: 'text', text: label, size: 'xxs', color: MUTED, align: 'center', wrap: true, margin: 'xs' }
+    ]
   })
-  const body: unknown[] = [
-    { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [metric('เปิดอยู่', d.open, INK), metric('ยังไม่รับ', d.unacknowledged, '#B45309'), metric('เกิน SLA', d.overdue, '#B91C1C')] },
-    { type: 'text', text: `วันนี้: ใหม่ ${d.newToday} · ดำเนินการแล้ว ${d.resolvedToday}`, size: 'xs', color: MUTED, wrap: true }
-  ]
-  if (d.byCategory.length) body.push({ type: 'box', layout: 'vertical', spacing: 'xs', contents: d.byCategory.slice(0, 6).map((c) => row(clean(c.category, 30), String(c.count))) })
-  if (d.overdueItems.length) {
-    body.push({ type: 'text', text: 'เกินกำหนด', size: 'xs', weight: 'bold', color: '#B91C1C', wrap: true })
-    body.push({ type: 'box', layout: 'vertical', spacing: 'xs', contents: d.overdueItems.slice(0, 6).map((it) => ({ type: 'text', text: `• ${it.ticketNo} ${clean(it.cat, 22)}${it.vehiclePlate ? ` · ${it.vehiclePlate}` : ''}${it.assigneeName ? ` · ${it.assigneeName}` : ' · ยังไม่มีผู้รับ'}`, size: 'xs', color: INK, wrap: true })) })
+  const countChip = (n: number, tone: 'neutral' | 'bad' = 'neutral') => ({
+    type: 'box', layout: 'vertical', flex: 0, backgroundColor: tone === 'bad' ? '#FEF2F2' : '#F3F4F6', cornerRadius: '999px', paddingAll: '2px', paddingStart: '10px', paddingEnd: '10px',
+    contents: [{ type: 'text', text: String(n), size: 'xs', weight: 'bold', color: tone === 'bad' ? '#B91C1C' : INK, wrap: true }]
+  })
+  // แถบสัดส่วนด้วย filler สองฝั่ง (ไม่มี box ว่าง): ส่วนเติม = box ที่มี text ว่างความสูง 8px
+  const progress = (percent: number) => {
+    const fill = Math.max(0, Math.min(100, percent))
+    const segment = (bg: string, flex: number) =>
+      flex === 0 ? null : { type: 'box', layout: 'vertical', flex, backgroundColor: bg, cornerRadius: '4px', height: '8px', contents: [{ type: 'text', text: ' ', size: 'xxs', color: bg }] }
+    return {
+      type: 'box', layout: 'horizontal', spacing: 'none', height: '8px', cornerRadius: '4px', backgroundColor: TRACK,
+      contents: [segment(theme.fg, fill), segment(TRACK, 100 - fill)].filter(Boolean)
+    }
   }
+
+  const body: unknown[] = [
+    { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [tile(d.open, 'เรื่องที่เปิดอยู่', INK, '#F3F4F6'), tile(d.unacknowledged, 'ยังไม่มีผู้รับ', d.unacknowledged > 0 ? '#B45309' : '#047857', d.unacknowledged > 0 ? '#FFFBEB' : '#ECFDF5'), tile(d.overdue, 'เกินกำหนด SLA', d.overdue > 0 ? '#B91C1C' : '#047857', d.overdue > 0 ? '#FEF2F2' : '#ECFDF5')] },
+    {
+      type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md',
+      contents: [
+        { type: 'box', layout: 'horizontal', contents: [{ type: 'text', text: 'รับเรื่องแล้ว', size: 'xs', color: MUTED, flex: 1, wrap: true }, { type: 'text', text: `${acked}/${d.open} · ${pct}%`, size: 'xs', color: INK, weight: 'bold', align: 'end', wrap: true }] },
+        progress(pct)
+      ]
+    },
+    { type: 'text', text: `วันนี้ · รับใหม่ ${d.newToday} เรื่อง · ดำเนินการแล้ว ${d.resolvedToday} เรื่อง`, size: 'xs', color: MUTED, wrap: true, margin: 'sm' }
+  ]
+
+  if (d.open === 0) {
+    body.push({
+      type: 'box', layout: 'vertical', backgroundColor: '#ECFDF5', cornerRadius: '12px', paddingAll: '14px', margin: 'md', spacing: 'xs',
+      contents: [
+        { type: 'text', text: '🎉 ไม่มีเรื่องค้างเลย', size: 'sm', weight: 'bold', color: '#047857', align: 'center', wrap: true },
+        { type: 'text', text: 'ขอบคุณทุกคนที่ดูแลเรื่องร้องเรียนอย่างรวดเร็ว', size: 'xs', color: '#047857', align: 'center', wrap: true }
+      ]
+    })
+  }
+
+  if (d.byCategory.length) {
+    body.push({ type: 'text', text: 'ตามหมวด', size: 'xs', weight: 'bold', color: INK, margin: 'lg', wrap: true })
+    body.push({
+      type: 'box', layout: 'vertical', spacing: 'sm', margin: 'sm',
+      contents: d.byCategory.slice(0, 6).map((c) => ({
+        type: 'box', layout: 'horizontal', spacing: 'md',
+        contents: [{ type: 'text', text: clean(c.category, 40), size: 'sm', color: INK, flex: 1, wrap: true, gravity: 'center' }, countChip(c.count)]
+      }))
+    })
+  }
+
+  if (d.overdueItems.length) {
+    body.push({ type: 'text', text: `⏰ เกินกำหนด (${d.overdueItems.length})`, size: 'xs', weight: 'bold', color: '#B91C1C', margin: 'lg', wrap: true })
+    body.push({
+      type: 'box', layout: 'vertical', spacing: 'sm', margin: 'sm',
+      contents: d.overdueItems.slice(0, 5).map((it) => ({
+        type: 'box', layout: 'vertical', backgroundColor: '#FEF2F2', cornerRadius: '10px', paddingAll: '10px', spacing: 'xs',
+        action: isHttps(d.consoleUrl) ? { type: 'uri', label: it.ticketNo, uri: `${d.consoleUrl}/complaints?search=${encodeURIComponent(it.ticketNo)}&all=true` } : undefined,
+        contents: [
+          { type: 'box', layout: 'horizontal', contents: [{ type: 'text', text: it.ticketNo, size: 'sm', weight: 'bold', color: '#B91C1C', flex: 1, wrap: true }, { type: 'text', text: clean(it.status, 20), size: 'xxs', color: '#B91C1C', align: 'end', wrap: true, gravity: 'center' }] },
+          { type: 'text', text: `${clean(it.cat, 30)}${it.vehiclePlate ? ` · ${it.vehiclePlate}` : ''}`, size: 'xs', color: INK, wrap: true },
+          { type: 'text', text: it.assigneeName ? `ผู้รับผิดชอบ ${clean(it.assigneeName, 30)} · ครบกำหนด ${bangkok(it.dueAt)}` : `ยังไม่มีผู้รับ · ครบกำหนด ${bangkok(it.dueAt)}`, size: 'xxs', color: MUTED, wrap: true }
+        ]
+      }))
+    })
+    if (d.overdueItems.length > 5) body.push({ type: 'text', text: `และอีก ${d.overdueItems.length - 5} เรื่อง — ดูทั้งหมดในกล่องงาน`, size: 'xxs', color: MUTED, wrap: true, margin: 'sm' })
+  }
+
   const contents = {
     type: 'bubble', size: 'mega',
-    header: { type: 'box', layout: 'vertical', backgroundColor: tone, paddingAll: '14px', contents: [{ type: 'text', text: '📋 สรุปเรื่องร้องเรียนค้าง', size: 'md', weight: 'bold', color: WHITE, wrap: true }, { type: 'text', text: bangkok(d.asOf), size: 'xs', color: ON_COLOR_SOFT, wrap: true }] },
-    body: { type: 'box', layout: 'vertical', paddingAll: '14px', spacing: 'md', contents: body },
-    footer: { type: 'box', layout: 'vertical', paddingAll: '12px', contents: isHttps(d.consoleUrl) ? [button('เปิดกล่องงาน', d.consoleUrl)] : [] },
+    header: {
+      type: 'box', layout: 'vertical', backgroundColor: theme.bg, paddingAll: '16px', spacing: 'xs',
+      contents: [
+        {
+          type: 'box', layout: 'horizontal',
+          contents: [
+            { type: 'text', text: 'สรุปเรื่องร้องเรียนค้าง', size: 'xs', color: ON_COLOR_SOFT, flex: 1, wrap: true, gravity: 'center' },
+            { type: 'box', layout: 'vertical', flex: 0, backgroundColor: WHITE, cornerRadius: '999px', paddingAll: '3px', paddingStart: '10px', paddingEnd: '10px', contents: [{ type: 'text', text: `${theme.icon} ${theme.label}`, size: 'xxs', weight: 'bold', color: theme.fg, wrap: true }] }
+          ]
+        },
+        { type: 'text', text: d.open === 0 ? 'ทุกเรื่องได้รับการดูแลแล้ว' : d.overdue > 0 ? `มี ${d.overdue} เรื่องเกินกำหนด SLA` : `มี ${d.unacknowledged} เรื่องรอผู้รับผิดชอบ`, size: 'lg', weight: 'bold', color: WHITE, wrap: true },
+        { type: 'text', text: `ข้อมูล ณ ${bangkok(d.asOf)} น.`, size: 'xxs', color: ON_COLOR_SOFT, wrap: true }
+      ]
+    },
+    body: { type: 'box', layout: 'vertical', paddingAll: '16px', spacing: 'none', contents: body },
+    footer: {
+      type: 'box', layout: 'vertical', paddingAll: '12px', spacing: 'sm',
+      contents: [
+        ...(isHttps(d.consoleUrl)
+          ? [
+              {
+                type: 'box', layout: 'horizontal', spacing: 'sm',
+                contents: [
+                  { type: 'button', style: 'primary', color: theme.bg, height: 'sm', flex: 1, action: { type: 'uri', label: d.unacknowledged > 0 ? 'เรื่องที่รอรับ' : 'เปิดกล่องงาน', uri: d.unacknowledged > 0 ? `${d.consoleUrl}/complaints?status=Submitted` : `${d.consoleUrl}/complaints` } },
+                  ...(d.overdue > 0 ? [{ type: 'button', style: 'secondary', height: 'sm', flex: 1, action: { type: 'uri', label: 'เกิน SLA', uri: `${d.consoleUrl}/complaints?overdue=true` } }] : [])
+                ]
+              }
+            ]
+          : []),
+        { type: 'text', text: 'ส่งอัตโนมัติจากระบบรับเรื่องร้องเรียน QTEC', size: 'xxs', color: MUTED, align: 'center', wrap: true }
+      ]
+    },
     styles: { footer: { separator: true, separatorColor: TRACK } }
   }
-  return { contents, altText: `📋 เรื่องร้องเรียนค้าง ${d.open} · ยังไม่รับ ${d.unacknowledged} · เกิน SLA ${d.overdue}`.slice(0, 400) }
+  return { contents, altText: `${theme.icon} เรื่องร้องเรียนค้าง ${d.open} · ยังไม่มีผู้รับ ${d.unacknowledged} · เกิน SLA ${d.overdue}`.slice(0, 400) }
 }
