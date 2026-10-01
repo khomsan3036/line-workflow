@@ -2,6 +2,7 @@ import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqp
 import { config } from '../config'
 import { sendAndLog } from './messaging'
 import { claimForSend } from './maintenanceEvents'
+import { pushReporterUpdate } from './complaintChat'
 import {
   buildComplaintNewCard,
   buildComplaintSlaCard,
@@ -48,7 +49,7 @@ const cfg = {
   },
   exchange: process.env.COMPLAINT_EVENT_EXCHANGE ?? 'complaint.events',
   queue: process.env.COMPLAINT_EVENT_QUEUE ?? 'line-workflow.complaint',
-  routingKeys: ['complaint.submitted', 'complaint.status_changed', 'complaint.sla_breached'],
+  routingKeys: ['complaint.submitted', 'complaint.status_changed', 'complaint.sla_breached', 'complaint.reporter_update'],
   // routing key ตามกติกาของ Complaint.Api: ComplaintNotificationResultIntegrationEvent -> complaint.notification_result
   resultKey: 'complaint.notification_result',
   dedupeHours: Number(process.env.COMPLAINT_EVENT_DEDUPE_HOURS ?? 1),
@@ -124,6 +125,15 @@ async function handleMessage(ch: Channel, msg: ConsumeMessage): Promise<void> {
   const ticketNo = String(payload.ticketNo ?? '')
   if (eventId && isDuplicate(eventId)) {
     stats.skipped++
+    return
+  }
+  // การ์ดถึงผู้ร้องเรียนที่ opt-in: ไม่มี recipients[] แต่มี lineUserIds[] และไม่ต้องรายงานผลกลับ
+  if (key === 'complaint.reporter_update') {
+    const ids = (Array.isArray(payload.lineUserIds) ? payload.lineUserIds : []).map(String).filter((u) => /^U[0-9a-f]{32}$/.test(u))
+    if (ids.length === 0) { stats.skipped++; return }
+    const ok = await pushReporterUpdate({ ticketNo, toStatusTh: String(payload.toStatusTh ?? payload.toStatus ?? ''), publicNote: (payload.publicNote as string | null) ?? null, trackUrl: String(payload.trackUrl ?? ''), lineUserIds: ids })
+    if (ok > 0) stats.sent++; else stats.failed++
+    console.log(`[complaint-events] reporter_update ${ticketNo} -> ส่ง ${ok}/${ids.length}`)
     return
   }
   const recipients = (Array.isArray(payload.recipients) ? payload.recipients : []) as ComplaintRecipient[]

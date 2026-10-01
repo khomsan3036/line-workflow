@@ -21,6 +21,7 @@ import { handleUnsend } from '../services/unsend'
 import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
 import { MAINTENANCE_HINT_LINE, buildTopicHelp, resolveTopic, topicQuickReply } from '../services/topicRouter'
 import { handleCrossCheckListPostback } from '../services/crossCheckListHandler'
+import { handleComplaintPostback, handleComplaintTrackMessage } from '../services/complaintChat'
 
 // ---------------------------------------------------------------------------
 // ขาเข้า: รับ event จาก LINE Platform แล้วบันทึกข้อความในกลุ่มลง PostgreSQL
@@ -202,6 +203,19 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // 5) ผู้ใช้กดปุ่ม Rich Menu ที่เป็น action ชนิด postback
   if (event.type === 'postback') {
+    // ปุ่ม "รับเรื่อง" บนการ์ดร้องเรียน (complaint=ack&t=...) -> Complaint.Api
+    if (
+      event.source.userId &&
+      (await handleComplaintPostback({
+        data: event.postback.data,
+        replyToken: event.replyToken,
+        userId: event.source.userId,
+        targetType: event.source.type === 'group' ? 'group' : 'user',
+        targetId: event.source.type === 'group' ? event.source.groupId : event.source.userId
+      }))
+    ) {
+      return
+    }
     // ปุ่ม "ดูรายชื่อ" บนการ์ดสรุปการเข้างาน (ตรวจเทียบ bPlus) ส่งรายชื่อเข้าแชทส่วนตัวเฉพาะ HR
     if (
       event.source.userId &&
@@ -256,6 +270,12 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     let matched: boolean | null = null
 
     if (text !== null) {
+      // ผู้ร้องเรียนขอรับแจ้งความคืบหน้า: "ติดตาม CP-2026-00001 123456"
+      if (await handleComplaintTrackMessage({ text, replyToken: event.replyToken, userId })) {
+        await saveDirectMessage({ lineMessageId: event.message.id, userId, displayName: await getUserProfileName(userId), messageType: 'text', messageText: text, replyText: '(ติดตามเรื่องร้องเรียน)', replyMatched: true, sentAt: new Date(event.timestamp) }).catch(() => {})
+        console.log(`[แชท 1:1] "${text.slice(0, 30)}" -> ผูกติดตามเรื่องร้องเรียน`)
+        return
+      }
       // OT ก่อน "เวลาเข้างานของฉัน" เพราะ "OT ของฉัน" มีคำว่า "ของฉัน" ซึ่ง handleMyAttendance ก็รับด้วย
       // (แชท 1:1 ดูได้เฉพาะ OT ของตัวเอง ไม่เห็นอันดับ)
       const overtime = await handleOvertimeQuestion({ text, replyToken: event.replyToken, targetType: 'user', targetId: userId })

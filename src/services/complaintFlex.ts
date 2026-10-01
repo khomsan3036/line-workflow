@@ -203,7 +203,16 @@ export function buildComplaintNewCard(e: ComplaintSubmitted): { contents: unknow
     paddingAll: '12px',
     spacing: 'sm',
     contents: [
-      ...(isHttps(e.consoleUrl) ? [button('เปิดดูและรับเรื่อง', e.consoleUrl)] : []),
+      // ปุ่มรับเรื่องจากในแชท (postback -> Complaint.Api ตรวจว่า LINE userId นี้เป็นเจ้าหน้าที่) + ปุ่มเปิดระบบ
+      {
+        type: 'box',
+        layout: 'horizontal',
+        spacing: 'sm',
+        contents: [
+          { type: 'button', style: 'primary', color: sev.color, height: 'sm', flex: 1, action: { type: 'postback', label: 'รับเรื่อง', data: `complaint=ack&t=${encodeURIComponent(e.ticketNo)}`, displayText: `รับเรื่อง ${e.ticketNo}` } },
+          ...(isHttps(e.consoleUrl) ? [{ type: 'button', style: 'secondary', height: 'sm', flex: 1, action: { type: 'uri', label: 'เปิดในระบบ', uri: e.consoleUrl } }] : [])
+        ]
+      },
       { type: 'text', text: 'ระบบรับเรื่องร้องเรียน QTEC', size: 'xs', color: MUTED, wrap: true }
     ]
   }
@@ -305,4 +314,54 @@ export function buildComplaintSlaCard(e: ComplaintSlaBreached): { contents: unkn
     styles: { footer: { separator: true, separatorColor: TRACK } }
   }
   return { contents, altText: `⏰ เกิน SLA ${e.ticketNo} ${what}`.slice(0, 400) }
+}
+
+/** การ์ดถึงผู้ร้องเรียนที่ opt-in — ไม่มีชื่อเจ้าหน้าที่ ไม่มีบันทึกภายใน */
+export function buildReporterUpdateCard(e: { ticketNo: string; toStatusTh: string; publicNote?: string | null; trackUrl: string }): { contents: unknown; altText: string } {
+  const contents = {
+    type: 'bubble',
+    size: 'kilo',
+    header: { type: 'box', layout: 'vertical', backgroundColor: '#1D4ED8', paddingAll: '14px', contents: [{ type: 'text', text: '📣 ความคืบหน้าเรื่องร้องเรียนของคุณ', size: 'sm', weight: 'bold', color: WHITE, wrap: true }] },
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px', spacing: 'md',
+      contents: [
+        { type: 'box', layout: 'vertical', spacing: 'sm', backgroundColor: CARD, cornerRadius: '10px', paddingAll: '12px', contents: [row('เลขที่', e.ticketNo), row('สถานะ', clean(e.toStatusTh, 60))] },
+        ...(e.publicNote ? [{ type: 'text', text: clean(e.publicNote, 400), size: 'sm', color: INK, wrap: true }] : [])
+      ]
+    },
+    footer: { type: 'box', layout: 'vertical', paddingAll: '12px', contents: isHttps(e.trackUrl) ? [button('ดูรายละเอียด', e.trackUrl)] : [] },
+    styles: { footer: { separator: true, separatorColor: TRACK } }
+  }
+  return { contents, altText: `📣 ${e.ticketNo}: ${e.toStatusTh}`.slice(0, 400) }
+}
+
+/** การ์ดสรุปเรื่องค้าง (งานตั้งเวลา) */
+export function buildComplaintDigestCard(d: {
+  asOf: string; open: number; newToday: number; resolvedToday: number; unacknowledged: number; overdue: number
+  byCategory: { category: string; count: number }[]
+  overdueItems: { ticketNo: string; status: string; cat: string; assigneeName: string | null; vehiclePlate: string | null; severity: string; dueAt: string }[]
+  consoleUrl: string
+}): { contents: unknown; altText: string } {
+  const tone = d.overdue > 0 ? '#B91C1C' : d.unacknowledged > 0 ? '#B45309' : '#047857'
+  const metric = (label: string, value: number, color: string) => ({
+    type: 'box', layout: 'vertical', flex: 1, backgroundColor: CARD, cornerRadius: '8px', paddingAll: '8px',
+    contents: [{ type: 'text', text: String(value), size: 'xl', weight: 'bold', color, align: 'center', wrap: true }, { type: 'text', text: label, size: 'xxs', color: MUTED, align: 'center', wrap: true }]
+  })
+  const body: unknown[] = [
+    { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [metric('เปิดอยู่', d.open, INK), metric('ยังไม่รับ', d.unacknowledged, '#B45309'), metric('เกิน SLA', d.overdue, '#B91C1C')] },
+    { type: 'text', text: `วันนี้: ใหม่ ${d.newToday} · ดำเนินการแล้ว ${d.resolvedToday}`, size: 'xs', color: MUTED, wrap: true }
+  ]
+  if (d.byCategory.length) body.push({ type: 'box', layout: 'vertical', spacing: 'xs', contents: d.byCategory.slice(0, 6).map((c) => row(clean(c.category, 30), String(c.count))) })
+  if (d.overdueItems.length) {
+    body.push({ type: 'text', text: 'เกินกำหนด', size: 'xs', weight: 'bold', color: '#B91C1C', wrap: true })
+    body.push({ type: 'box', layout: 'vertical', spacing: 'xs', contents: d.overdueItems.slice(0, 6).map((it) => ({ type: 'text', text: `• ${it.ticketNo} ${clean(it.cat, 22)}${it.vehiclePlate ? ` · ${it.vehiclePlate}` : ''}${it.assigneeName ? ` · ${it.assigneeName}` : ' · ยังไม่มีผู้รับ'}`, size: 'xs', color: INK, wrap: true })) })
+  }
+  const contents = {
+    type: 'bubble', size: 'mega',
+    header: { type: 'box', layout: 'vertical', backgroundColor: tone, paddingAll: '14px', contents: [{ type: 'text', text: '📋 สรุปเรื่องร้องเรียนค้าง', size: 'md', weight: 'bold', color: WHITE, wrap: true }, { type: 'text', text: bangkok(d.asOf), size: 'xs', color: ON_COLOR_SOFT, wrap: true }] },
+    body: { type: 'box', layout: 'vertical', paddingAll: '14px', spacing: 'md', contents: body },
+    footer: { type: 'box', layout: 'vertical', paddingAll: '12px', contents: isHttps(d.consoleUrl) ? [button('เปิดกล่องงาน', d.consoleUrl)] : [] },
+    styles: { footer: { separator: true, separatorColor: TRACK } }
+  }
+  return { contents, altText: `📋 เรื่องร้องเรียนค้าง ${d.open} · ยังไม่รับ ${d.unacknowledged} · เกิน SLA ${d.overdue}`.slice(0, 400) }
 }

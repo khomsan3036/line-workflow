@@ -4,6 +4,7 @@ import { runDailySummary } from './jobs/dailySummary'
 import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceReport'
 import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
 import { runOvertimeReport } from './jobs/overtimeReport'
+import { runComplaintDigest } from './services/complaintChat'
 
 // ---------------------------------------------------------------------------
 // ตัวตั้งเวลาในตัวโปรแกรม (in-process scheduler)
@@ -140,6 +141,27 @@ export function startScheduler(): void {
         { timezone: tz }
       )
       console.log(`[scheduler] ตั้งงาน MT ${job.label} ไว้ที่ "${job.cron}" (${tz})`)
+    }
+  }
+
+  // ระบบรับเรื่องร้องเรียน: การ์ดสรุปเรื่องค้าง -> COMPLAINT_DIGEST_GROUP_IDS (ว่าง = ปิด)
+  const digestCron = (process.env.COMPLAINT_DIGEST_CRON ?? '').trim()
+  if (digestCron) {
+    if (!cron.validate(digestCron)) console.error(`[scheduler] รูปแบบ COMPLAINT_DIGEST_CRON ไม่ถูกต้อง: ${digestCron}`)
+    else {
+      cron.schedule(
+        digestCron,
+        async () => {
+          console.log(`[scheduler] เริ่มงานสรุปเรื่องร้องเรียนค้าง ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+          try {
+            await runComplaintDigest()
+          } catch (err) {
+            console.error('[scheduler] งานสรุปเรื่องร้องเรียนผิดพลาด:', err instanceof Error ? err.message : err)
+          }
+        },
+        { timezone: tz }
+      )
+      console.log(`[scheduler] ตั้งงานสรุปเรื่องร้องเรียนค้างไว้ที่ "${digestCron}" (${tz})`)
     }
   }
 }
