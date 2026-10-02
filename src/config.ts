@@ -258,6 +258,33 @@ export const config = {
     }
   },
 
+  // -------------------------------------------------------------------
+  // ระบบรับเรื่องร้องเรียน (complaint-system)
+  //   events : รับ event จาก exchange complaint.events (RABBITMQ_URL เดียวกับ MT) แล้วส่งการ์ดด้วย OA HR
+  //   api    : ปุ่ม "รับเรื่อง" / "ติดตาม CP-…" / การ์ดสรุปเรื่องค้าง เรียก Complaint.Api ด้วย X-Service-Token
+  //            token ต้องเท่ากับ Integration:ServiceToken ของ Complaint.Api (COMPLAINT_SERVICE_TOKEN ใน .env ของ complaint-system)
+  // -------------------------------------------------------------------
+  complaint: {
+    events: {
+      url: (process.env.RABBITMQ_URL ?? '').trim(),
+      exchange: process.env.COMPLAINT_EVENT_EXCHANGE ?? 'complaint.events',
+      queue: process.env.COMPLAINT_EVENT_QUEUE ?? 'line-workflow.complaint',
+      // กันการ์ดเดิมซ้ำ (เลขที่เรื่อง + ชนิด) ภายในกี่ชั่วโมง ใช้ตาราง maintenance_alert_dedupe ร่วมกัน
+      dedupeHours: Number(process.env.COMPLAINT_EVENT_DEDUPE_HOURS ?? 1),
+      get enabled(): boolean {
+        return this.url !== '' && (process.env.COMPLAINT_EVENTS_ENABLED ?? 'true').trim().toLowerCase() !== 'false'
+      }
+    },
+    apiUrl: (process.env.COMPLAINT_API_URL ?? '').trim().replace(/\/$/, ''),
+    serviceToken: (process.env.COMPLAINT_SERVICE_TOKEN ?? '').trim(),
+    // การ์ดสรุปเรื่องร้องเรียนค้าง (ว่าง = ปิด) -> กลุ่ม/บุคคล คั่นด้วยจุลภาค
+    digestCron: (process.env.COMPLAINT_DIGEST_CRON ?? '').trim(),
+    digestTargets: list(process.env.COMPLAINT_DIGEST_GROUP_IDS),
+    get apiEnabled(): boolean {
+      return this.apiUrl !== '' && this.serviceToken !== ''
+    }
+  },
+
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
     password: process.env.ADMIN_PASSWORD ?? 'admin1234',

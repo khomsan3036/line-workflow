@@ -145,7 +145,7 @@ export function startScheduler(): void {
   }
 
   // ระบบรับเรื่องร้องเรียน: การ์ดสรุปเรื่องค้าง -> COMPLAINT_DIGEST_GROUP_IDS (ว่าง = ปิด)
-  const digestCron = (process.env.COMPLAINT_DIGEST_CRON ?? '').trim()
+  const digestCron = config.complaint.digestCron
   if (digestCron) {
     if (!cron.validate(digestCron)) console.error(`[scheduler] รูปแบบ COMPLAINT_DIGEST_CRON ไม่ถูกต้อง: ${digestCron}`)
     else {

@@ -11,15 +11,9 @@ import { buildComplaintDigestCard, buildReporterUpdateCard } from './complaintFl
 // ---------------------------------------------------------------------------
 
 const api = {
-  get base() {
-    return (process.env.COMPLAINT_API_URL ?? '').trim().replace(/\/$/, '')
-  },
-  get token() {
-    return (process.env.COMPLAINT_SERVICE_TOKEN ?? '').trim()
-  },
-  get enabled() {
-    return this.base !== '' && this.token !== ''
-  }
+  base: config.complaint.apiUrl,
+  token: config.complaint.serviceToken,
+  enabled: config.complaint.apiEnabled
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -28,6 +22,8 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers: { 'content-type': 'application/json', 'x-service-token': api.token, ...(init.headers ?? {}) },
     signal: AbortSignal.timeout(15000)
   })
+  // 401 = COMPLAINT_SERVICE_TOKEN ไม่ตรงกับ Integration:ServiceToken ของ Complaint.Api (เช่น รัน dotnet run ด้วย appsettings ค่า dev)
+  if (res.status === 401) throw new Error(`Complaint.Api ${path} -> HTTP 401 (COMPLAINT_SERVICE_TOKEN ไม่ตรงกับ Integration:ServiceToken)`)
   if (!res.ok) throw new Error(`Complaint.Api ${path} -> HTTP ${res.status}`)
   return (await res.json()) as T
 }
@@ -94,8 +90,12 @@ export async function runComplaintDigest(opts: { dryRun?: boolean; to?: string[]
     console.warn('[complaint-digest] ปิดอยู่ (ไม่ได้ตั้ง COMPLAINT_API_URL / COMPLAINT_SERVICE_TOKEN)')
     return { sent: 0, digest: null }
   }
+  const targets = opts.to ?? config.complaint.digestTargets
+  if (targets.length === 0) {
+    console.warn('[complaint-digest] ไม่มีปลายทาง (COMPLAINT_DIGEST_GROUP_IDS ว่าง)')
+    return { sent: 0, digest: null }
+  }
   const digest = await call<ComplaintDigest>('/api/integration/digest')
-  const targets = opts.to ?? (process.env.COMPLAINT_DIGEST_GROUP_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   const card = buildComplaintDigestCard(digest)
   let sent = 0
   for (const id of targets) {
@@ -118,5 +118,5 @@ export async function pushReporterUpdate(e: { ticketNo: string; toStatusTh: stri
 }
 
 export function complaintChatStatus(): Record<string, unknown> {
-  return { enabled: api.enabled, apiUrl: api.base || null, digestTargets: (process.env.COMPLAINT_DIGEST_GROUP_IDS ?? '').split(',').filter(Boolean).length, tz: config.timezone }
+  return { enabled: api.enabled, apiUrl: api.base || null, digestTargets: config.complaint.digestTargets.length, tz: config.timezone }
 }

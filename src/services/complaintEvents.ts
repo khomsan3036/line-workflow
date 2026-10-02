@@ -44,18 +44,10 @@ function isDuplicate(id: string): boolean {
 }
 
 const cfg = {
-  get url() {
-    return (process.env.RABBITMQ_URL ?? '').trim()
-  },
-  exchange: process.env.COMPLAINT_EVENT_EXCHANGE ?? 'complaint.events',
-  queue: process.env.COMPLAINT_EVENT_QUEUE ?? 'line-workflow.complaint',
+  ...config.complaint.events,
   routingKeys: ['complaint.submitted', 'complaint.status_changed', 'complaint.sla_breached', 'complaint.reporter_update'],
   // routing key ตามกติกาของ Complaint.Api: ComplaintNotificationResultIntegrationEvent -> complaint.notification_result
-  resultKey: 'complaint.notification_result',
-  dedupeHours: Number(process.env.COMPLAINT_EVENT_DEDUPE_HOURS ?? 1),
-  get enabled() {
-    return this.url !== '' && (process.env.COMPLAINT_EVENTS_ENABLED ?? 'true') !== 'false'
-  }
+  resultKey: 'complaint.notification_result'
 }
 
 interface DeliveryResult {
@@ -188,7 +180,9 @@ async function connect(): Promise<void> {
   await ch.assertExchange(cfg.exchange, 'topic', { durable: true })
   await ch.assertQueue(cfg.queue, { durable: true })
   for (const key of cfg.routingKeys) await ch.bindQueue(cfg.queue, cfg.exchange, key)
-  await ch.prefetch(3)
+  // ทีละข้อความ (ack หลังส่งเสร็จ) ให้การ์ดออกตามลำดับ event: prefetch 3 ทำให้ event ที่ค้างคิว (เช่น หลัง restart/deploy)
+  // ถูกส่งพร้อมกัน แล้วการ์ด "สถานะเปลี่ยน" ไปถึงกลุ่มก่อนการ์ด "เรื่องใหม่" ของเรื่องเดียวกัน (เรื่องร้องเรียนมีไม่มาก ไม่กระทบความเร็ว)
+  await ch.prefetch(1)
 
   conn.on('error', (err) => {
     stats.lastError = err instanceof Error ? err.message : String(err)
