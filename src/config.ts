@@ -382,7 +382,18 @@ export const config = {
     otAllowedGroupIds: (process.env.OT_ALLOWED_GROUP_IDS || process.env.OT_REPORT_GROUP_IDS || '')
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s.startsWith('C'))
+      .filter((s) => s.startsWith('C')),
+
+    // ประกาศ "Monthly Cleaning Day" (วันเสาร์สุดท้ายของเดือน)
+    //   CLEANING_DAY_CRON = รอบที่ตรวจว่าวันนี้ต้องแจ้งไหม ค่าเริ่มต้น 08:00 และ 17:00 ทุกวัน (ว่าง = ปิด)
+    //   แจ้งล่วงหน้า CLEANING_DAY_DAYS_BEFORE วัน (ค่าเริ่มต้น 3 -> 1/3, 2/3, 3/3) + วันเสาร์นั้นเอง แล้วหยุดจนถึงรอบเดือนหน้า
+    //   CLEANING_DAY_GROUP_IDS = ปลายทางคั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ไม่ส่ง
+    cleaningDayCron: (process.env.CLEANING_DAY_CRON ?? '0 8,17 * * *').trim(),
+    cleaningDayTargets: list(process.env.CLEANING_DAY_GROUP_IDS),
+    cleaningDayDaysBefore: Math.min(7, Math.max(0, Number(process.env.CLEANING_DAY_DAYS_BEFORE ?? 3) || 0)),
+    cleaningDayMessage:
+      (process.env.CLEANING_DAY_MESSAGE ?? '').trim() ||
+      'ขอความร่วมมือพนักงานทุกท่าน ร่วมกันจัดระเบียบและทำความสะอาดพื้นที่ทำงานส่วนตัว รวมถึงพื้นที่ส่วนกลาง ในกิจกรรม Monthly Cleaning Day ประจำเดือนนี้ เพื่อสร้างบรรยากาศการทำงานที่สดชื่นและปลอดภัยสำหรับทุกคน'
   }
 }
 

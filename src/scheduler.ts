@@ -4,6 +4,7 @@ import { runDailySummary } from './jobs/dailySummary'
 import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceReport'
 import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
 import { runOvertimeReport } from './jobs/overtimeReport'
+import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
 import { runComplaintDigest } from './services/complaintChat'
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,27 @@ export function startScheduler(): void {
       { timezone: tz }
     )
     console.log(`[scheduler] ตั้งงาน Top OT ไว้ที่ "${otCron}" (${tz}) -> ${config.scheduler.otReportTargets.length} ปลายทาง`)
+  }
+
+  // ประกาศ "Monthly Cleaning Day": ตรวจทุกรอบ (ค่าเริ่มต้น 08:00 และ 17:00) งานตัดสินเองว่าวันนี้ต้องแจ้งไหม ว่าง = ปิด
+  const cleaningCron = config.scheduler.cleaningDayCron
+  if (cleaningCron && !cron.validate(cleaningCron)) {
+    console.error(`[scheduler] รูปแบบ CLEANING_DAY_CRON ไม่ถูกต้อง: ${cleaningCron}`)
+  } else if (cleaningCron && config.scheduler.cleaningDayTargets.length > 0) {
+    cron.schedule(
+      cleaningCron,
+      async () => {
+        try {
+          const outcome = await runCleaningDayReminder({ dedupe: true, sentBy: 'scheduler:cleaning-day' })
+          if (!outcome.notice) return
+          for (const t of outcome.targets) console.log(`[scheduler]   Cleaning Day -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานประกาศ Cleaning Day ผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานประกาศ Cleaning Day ไว้ที่ "${cleaningCron}" (${tz}) -> ${config.scheduler.cleaningDayTargets.length} ปลายทาง`)
   }
 
   // OA ทีมซ่อมบำรุง: การ์ด "งานซ่อมค้างวันนี้" และ "แจ้งเตือนงานซ่อมเร่งด่วน" (ว่าง = ปิดงานนั้น)
