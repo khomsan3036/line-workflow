@@ -14,6 +14,13 @@ function list(v: string | undefined): string[] {
     .filter(Boolean)
 }
 
+/** "8:5" ไม่ผ่าน / "8:05" / "08.05" -> "08:05" ค่าผิดรูปแบบใช้ค่าเริ่มต้น */
+function normalizeTime(v: string | undefined, fallback: string): string {
+  const m = (v ?? '').trim().match(/^(\d{1,2})[:.](\d{2})$/)
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return fallback
+  return `${m[1].padStart(2, '0')}:${m[2]}`
+}
+
 /** หลาย cron คั่นด้วย ; -> array เช่น "30 10 * * *;0 20 * * *" (จุลภาคเป็นส่วนหนึ่งของ cron จึงใช้คั่นไม่ได้) */
 function splitCronList(v: string): string[] {
   return v
@@ -392,6 +399,33 @@ export const config = {
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.startsWith('C')),
+
+    // การ์ด "ขาดงานติดต่อกัน" แยก Workshop / Site (จากสแกนนิ้ว AttendanceDaily + สถานะใน MANPOWER_HR)
+    //   ABSENCE_REPORT_CRON = ค่าเริ่มต้น จ.-ส. 09:00 (ตรวจถึงเมื่อวาน) ว่าง = ปิด
+    //   ABSENCE_REPORT_GROUP_IDS = ปลายทางคั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ไม่ส่ง (มีรายชื่อพนักงาน ส่งเฉพาะกลุ่ม HR)
+    //   ABSENCE_MIN_DAYS = ขาดติดต่อกันกี่วันทำงานขึ้นไป (ค่าเริ่มต้น 2)
+    //   ABSENCE_ACTIVE_DAYS = สแกนล่าสุดไม่เกินกี่วันจึงนับว่ายังทำงานอยู่ (ค่าเริ่มต้น 14) เกินนั้นแสดงเป็นจำนวนให้ HR ตรวจสถานะ
+    //   ABSENCE_REPORT_TOP = รายชื่อต่อสถานที่ (ค่าเริ่มต้น 10, สูงสุด 20)
+    absenceReportCron: (process.env.ABSENCE_REPORT_CRON ?? '0 9 * * 1-6').trim(),
+    absenceReportTargets: list(process.env.ABSENCE_REPORT_GROUP_IDS),
+    absenceMinDays: Math.max(1, Number(process.env.ABSENCE_MIN_DAYS) || 2),
+    absenceActiveDays: Math.max(2, Number(process.env.ABSENCE_ACTIVE_DAYS) || 14),
+    // จำนวนรายชื่อต่อสถานที่บนการ์ด (คนที่ขาดนานสุด) ตัวเลขภาพรวมยังนับทุกคน
+    absenceReportTop: Math.min(20, Math.max(1, Number(process.env.ABSENCE_REPORT_TOP) || 10)),
+
+    // การ์ด "มาสายติดต่อกัน" แยก Workshop / Site (สแกนแรกของวันจาก AttendanceDaily + สถานะใน MANPOWER_HR)
+    //   LATE_REPORT_CRON = ค่าเริ่มต้น จ.-ส. 09:05 (ตรวจถึงเมื่อวาน) ว่าง = ปิด
+    //   LATE_REPORT_GROUP_IDS = ปลายทางคั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ไม่ส่ง
+    //   LATE_MIN_DAYS = สายติดกันกี่วันทำงานขึ้นไป (ค่าเริ่มต้น 2), LATE_REPORT_TOP = รายชื่อต่อสถานที่ (10, สูงสุด 20)
+    //   LATE_WORKSHOP_TIME / LATE_SITE_TIME = เวลาเข้างาน HH:mm (สายตั้งแต่นาทีถัดไป) ค่าเริ่มต้น 08:00 / 07:40
+    //   LATE_MAX_TIME = สแกนแรกตั้งแต่เวลานี้ไม่นับว่าสาย (มักลืมสแกนเช้า/ลาครึ่งวัน) ค่าเริ่มต้น 10:00
+    lateReportCron: (process.env.LATE_REPORT_CRON ?? '5 9 * * 1-6').trim(),
+    lateReportTargets: list(process.env.LATE_REPORT_GROUP_IDS),
+    lateMinDays: Math.max(1, Number(process.env.LATE_MIN_DAYS) || 2),
+    lateReportTop: Math.min(20, Math.max(1, Number(process.env.LATE_REPORT_TOP) || 10)),
+    lateWorkshopTime: normalizeTime(process.env.LATE_WORKSHOP_TIME, '08:00'),
+    lateSiteTime: normalizeTime(process.env.LATE_SITE_TIME, '07:40'),
+    lateMaxTime: normalizeTime(process.env.LATE_MAX_TIME, '10:00'),
 
     // ประกาศ "Monthly Cleaning Day" (วันเสาร์สุดท้ายของเดือน)
     //   CLEANING_DAY_CRON = รอบที่ตรวจว่าวันนี้ต้องแจ้งไหม ค่าเริ่มต้น 08:00 และ 17:00 ทุกวัน (ว่าง = ปิด)

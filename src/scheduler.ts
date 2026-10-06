@@ -5,6 +5,8 @@ import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceRep
 import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
 import { runOvertimeReport } from './jobs/overtimeReport'
 import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
+import { runAbsenceReport } from './jobs/absenceReport'
+import { runLatenessReport } from './jobs/latenessReport'
 import { runComplaintDigest } from './services/complaintChat'
 import { printDocumentExpiryRun, runDocumentExpiryDispatch } from './services/documentExpiryDispatch'
 
@@ -106,6 +108,56 @@ export function startScheduler(): void {
       { timezone: tz }
     )
     console.log(`[scheduler] ตั้งงาน Top OT ไว้ที่ "${otCron}" (${tz}) -> ${config.scheduler.otReportTargets.length} ปลายทาง`)
+  }
+
+  // การ์ด "ขาดงานติดต่อกัน" (ค่าเริ่มต้น จ.-ส. 09:00 ตรวจถึงเมื่อวาน) ว่าง / ไม่มีปลายทาง = ปิด
+  const absenceCron = config.scheduler.absenceReportCron
+  if (absenceCron && !cron.validate(absenceCron)) {
+    console.error(`[scheduler] รูปแบบ ABSENCE_REPORT_CRON ไม่ถูกต้อง: ${absenceCron}`)
+  } else if (absenceCron && config.scheduler.absenceReportTargets.length > 0) {
+    cron.schedule(
+      absenceCron,
+      async () => {
+        console.log(`[scheduler] เริ่มงานขาดงานติดต่อกัน ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        try {
+          const outcome = await runAbsenceReport({ sentBy: 'scheduler:absence-report' })
+          if (outcome.sendStatus === 'not-configured') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง DATABASE_URL_MSSQL')
+            return
+          }
+          for (const t of outcome.targets) console.log(`[scheduler]   ขาดงาน -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานขาดงานติดต่อกันผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานขาดงานติดต่อกันไว้ที่ "${absenceCron}" (${tz}) -> ${config.scheduler.absenceReportTargets.length} ปลายทาง`)
+  }
+
+  // การ์ด "มาสายติดต่อกัน" (ค่าเริ่มต้น จ.-ส. 09:05 ตรวจถึงเมื่อวาน) ว่าง / ไม่มีปลายทาง = ปิด
+  const lateCron = config.scheduler.lateReportCron
+  if (lateCron && !cron.validate(lateCron)) {
+    console.error(`[scheduler] รูปแบบ LATE_REPORT_CRON ไม่ถูกต้อง: ${lateCron}`)
+  } else if (lateCron && config.scheduler.lateReportTargets.length > 0) {
+    cron.schedule(
+      lateCron,
+      async () => {
+        console.log(`[scheduler] เริ่มงานมาสายติดต่อกัน ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        try {
+          const outcome = await runLatenessReport({ sentBy: 'scheduler:late-report' })
+          if (outcome.sendStatus === 'not-configured') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง DATABASE_URL_MSSQL')
+            return
+          }
+          for (const t of outcome.targets) console.log(`[scheduler]   มาสาย -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานมาสายติดต่อกันผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานมาสายติดต่อกันไว้ที่ "${lateCron}" (${tz}) -> ${config.scheduler.lateReportTargets.length} ปลายทาง`)
   }
 
   // ประกาศ "Monthly Cleaning Day": ตรวจทุกรอบ (ค่าเริ่มต้น 08:00 และ 17:00) งานตัดสินเองว่าวันนี้ต้องแจ้งไหม ว่าง = ปิด

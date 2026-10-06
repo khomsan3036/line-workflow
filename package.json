@@ -22,6 +22,8 @@
     "attendance-report": "tsx scripts/attendance-report.ts",
     "mt-report": "tsx scripts/mt-report.ts",
     "ot-report": "tsx scripts/ot-report.ts",
+    "absence-report": "tsx scripts/absence-report.ts",
+    "late-report": "tsx scripts/late-report.ts",
     "cleaning-day": "tsx scripts/cleaning-day.ts",
     "seed:media": "tsx scripts/seed-media.ts",
     "media:cleanup": "tsx scripts/media-cleanup.ts",
