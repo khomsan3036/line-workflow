@@ -2,6 +2,7 @@ import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqp
 import { config } from '../config'
 import { query, queryOne } from '../db'
 import { normalizeAlert, type AlertSeverity, type GroupAlert } from './maintenanceFlex'
+import { buildExpiryDigestCard, expiryDigestToText, parseExpiryDigest } from './documentExpiryFlex'
 import { pushAlertToGroups } from './maintenanceLocalTools'
 
 // ---------------------------------------------------------------------------
@@ -309,6 +310,24 @@ function fromNotificationPayload(e: Json): GroupAlert {
   const severity: AlertSeverity =
     sev === 'urgent' || type === 'urgent' ? 'urgent' : sev === 'warning' || type === 'alert' || type === 'pending' ? 'warning' : 'info'
   const service = str(e.service)
+
+  // เอกสารใกล้หมดอายุ (asset service) มีการ์ดของตัวเอง: การ์ดกลางจะโชว์
+  // "ประเภท: document_expiry_sticker" และซ่อนเลข "เหลือกี่วัน" ไว้ในข้อความ
+  const digest = parseExpiryDigest(e, config.maintenance.webUrl)
+  if (digest) {
+    const base = normalizeAlert(
+      {
+        title: str(e.title) || `${digest.categoryLabel}: เอกสารใกล้หมดอายุ`,
+        message: str(e.message) || '-',
+        severity,
+        items: Array.isArray(e.items) ? e.items : [],
+        reference: undefined
+      },
+      str(e.requestedBy) || 'ระบบเอกสารและวันหมดอายุ'
+    )
+    return { ...base, custom: buildExpiryDigestCard(digest), customText: expiryDigestToText(digest) }
+  }
+
   return normalizeAlert(
     {
       title: str(e.title) || 'แจ้งเตือนจากระบบซ่อมบำรุง',

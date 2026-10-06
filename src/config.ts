@@ -195,6 +195,12 @@ export const config = {
     mcpTimeoutMs: Number(process.env.MAINTENANCE_MCP_TIMEOUT_MS ?? 60000),
     // URL หน้าเว็บระบบซ่อมบำรุง (ไม่มี / ท้าย) ใช้ทำปุ่ม "เปิดหน้าอนุมัติ" ในการ์ดแจ้งเตือน ปล่อยว่าง = ไม่มีปุ่ม
     webUrl: stripSlash((process.env.MAINTENANCE_WEB_URL ?? '').trim()),
+    // API ของ maintenance-asset-service (ไม่มี / ท้าย) ใช้สั่ง dispatch แจ้งเตือนเอกสารใกล้หมดอายุ
+    //   dev: http://localhost:5111   production (docker network เดียวกัน): http://maintenance-asset-service:8080
+    // ว่าง = ปิดงานตั้งเวลาแจ้งเตือนเอกสาร
+    apiUrl: stripSlash((process.env.MAINTENANCE_API_URL ?? '').trim()),
+    // เวลาที่ยอมรอ asset service ตอนสั่ง dispatch (มันต้องอ่านเอกสารทั้งทะเบียน + ส่งอีเมล)
+    docExpiryTimeoutMs: Number(process.env.MAINTENANCE_DOC_EXPIRY_TIMEOUT_MS ?? 120000),
     // จำกัดชื่อ tool ที่ให้บอทเรียกได้ (คั่นด้วยจุลภาค, รองรับ * เช่น Get*) ค่าว่างหรือ * = ทุก tool
     mcpTools: (process.env.MAINTENANCE_MCP_TOOLS ?? '*')
       .split(',')
@@ -340,6 +346,9 @@ export const config = {
     enabled: bool(process.env.ENABLE_SCHEDULER, false),
     // รูปแบบ cron 5 ช่อง: นาที ชั่วโมง วันที่ เดือน วันในสัปดาห์ (เวลาตาม TZ ด้านบน)
     summaryCron: process.env.SUMMARY_CRON ?? '0 18 * * *',
+    // แจ้งเตือนเอกสารใกล้หมดอายุ (ป้ายภาษี/พ.ร.บ., ประกันภัย, ปจ., สติ๊กเกอร์, ใบขับขี่)
+    // ค่าเริ่มต้น 09:30 ทุกวัน — เช้าพอให้ทำเรื่องต่ออายุทันในวันเดียวกัน ว่าง = ปิดงานนี้
+    docExpiryCron: (process.env.MT_DOC_EXPIRY_CRON ?? '30 9 * * *').trim(),
     // REPORT_CRON ส่งการ์ด "สรุปการเข้างาน" (จำนวนพนักงานสแกนเข้างาน) ไม่ใช่รายงานยอดขายจำลองของหลักสูตรอีกต่อไป
     reportCron: process.env.REPORT_CRON ?? '0 8 * * *',
     // หลายรอบต่อวันที่นาทีไม่เท่ากัน (เช่น 10:30 และ 20:00) เขียนเป็น cron เดียวไม่ได้ จึงคั่นหลาย cron ด้วย ;

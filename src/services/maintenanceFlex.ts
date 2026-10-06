@@ -404,6 +404,14 @@ export interface GroupAlert {
   reference?: string
   /** ชื่อผู้แจ้ง (แสดงท้ายการ์ด) */
   requestedBy: string
+  /**
+   * การ์ด Flex ที่สร้างไว้เองสำหรับ event ชนิดนั้นโดยเฉพาะ (ถ้ามี buildAlertCard จะใช้อันนี้แทน)
+   * ใช้เมื่อการ์ดกลางสื่อไม่ตรง เช่น เอกสารหมดอายุที่ต้องเน้นตัวเลข "เหลือกี่วัน" เป็นพระเอก
+   * — ยังต้องใส่ title/message/items ไว้ด้วย เพราะเป็น altText และข้อความสำรอง
+   */
+  custom?: unknown
+  /** ข้อความสำรองที่เขียนเองคู่กับ custom (ว่าง = ใช้ alertToText ปกติ) */
+  customText?: string
 }
 
 const SEVERITY_META: Record<AlertSeverity, { color: string; label: string; icon: string }> = {
@@ -452,6 +460,7 @@ export function normalizeAlert(raw: Record<string, unknown>, requestedBy: string
 }
 
 export function alertToText(alert: GroupAlert): string {
+  if (alert.customText) return alert.customText
   const meta = SEVERITY_META[alert.severity]
   const lines = [
     `${meta.icon} [${meta.label}] ${alert.title}`,
@@ -478,6 +487,8 @@ function detailRow(d: AlertDetail) {
 }
 
 export function buildAlertCard(alert: GroupAlert): unknown {
+  // การ์ดเฉพาะทางของ event ชนิดนั้น (เช่น เอกสารหมดอายุ) ชนะการ์ดกลาง
+  if (alert.custom) return alert.custom
   const meta = SEVERITY_META[alert.severity]
   const body: unknown[] = [{ type: 'text', text: alert.message, size: 'sm', color: INK, wrap: true }]
   if (alert.details.length > 0) {

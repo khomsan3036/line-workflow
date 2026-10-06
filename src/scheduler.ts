@@ -6,6 +6,7 @@ import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKin
 import { runOvertimeReport } from './jobs/overtimeReport'
 import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
 import { runComplaintDigest } from './services/complaintChat'
+import { printDocumentExpiryRun, runDocumentExpiryDispatch } from './services/documentExpiryDispatch'
 
 // ---------------------------------------------------------------------------
 // ตัวตั้งเวลาในตัวโปรแกรม (in-process scheduler)
@@ -164,6 +165,34 @@ export function startScheduler(): void {
       )
       console.log(`[scheduler] ตั้งงาน MT ${job.label} ไว้ที่ "${job.cron}" (${tz})`)
     }
+  }
+
+  // แจ้งเตือนเอกสารใกล้หมดอายุทุกเช้า: สั่ง maintenance-asset-service ให้ dispatch
+  // (มันจะ publish เข้า maintenance.line.notification -> consumer ของแอปนี้ทำการ์ด Flex ส่งเข้ากลุ่ม
+  //  และส่งอีเมลให้ผู้รับของแต่ละหมวดด้วยในคำสั่งเดียว)
+  const docExpiryCron = config.scheduler.docExpiryCron
+  if (docExpiryCron && config.maintenance.apiUrl) {
+    if (!cron.validate(docExpiryCron)) {
+      console.error(`[scheduler] รูปแบบ MT_DOC_EXPIRY_CRON ไม่ถูกต้อง: ${docExpiryCron}`)
+    } else {
+      cron.schedule(
+        docExpiryCron,
+        async () => {
+          console.log(`[scheduler] เริ่มงานแจ้งเตือนเอกสารใกล้หมดอายุ ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+          // runDocumentExpiryDispatch ไม่ throw: ตัวตั้งเวลาต้องไม่ล้มเพราะปลายทางตอบไม่ได้
+          const summary = await runDocumentExpiryDispatch('cron')
+          printDocumentExpiryRun(summary)
+          if (!summary.ok && summary.error) {
+            console.error(`[scheduler]   แจ้งเตือนเอกสารไม่สมบูรณ์: ${summary.error}`)
+          }
+        },
+        { timezone: tz }
+      )
+      console.log(`[scheduler] ตั้งงานแจ้งเตือนเอกสารใกล้หมดอายุไว้ที่ "${docExpiryCron}" (${tz}) -> ${config.maintenance.apiUrl}`)
+    }
+  } else if (docExpiryCron && !config.maintenance.apiUrl) {
+    // ตั้งเวลาไว้แต่ไม่รู้จะเรียกใคร: บอกให้ชัด ดีกว่าเงียบแล้วไม่มีการ์ดมาทุกเช้า
+    console.warn('[scheduler] ข้ามงานแจ้งเตือนเอกสารใกล้หมดอายุ: ยังไม่ได้ตั้ง MAINTENANCE_API_URL')
   }
 
   // ระบบรับเรื่องร้องเรียน: การ์ดสรุปเรื่องค้าง -> COMPLAINT_DIGEST_GROUP_IDS (ว่าง = ปิด)
