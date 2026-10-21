@@ -25,6 +25,7 @@
     "absence-report": "tsx scripts/absence-report.ts",
     "late-report": "tsx scripts/late-report.ts",
     "cleaning-day": "tsx scripts/cleaning-day.ts",
+    "store-request-card": "tsx scripts/store-request-card.ts",
     "seed:media": "tsx scripts/seed-media.ts",
     "media:cleanup": "tsx scripts/media-cleanup.ts",
     "mt:publish-test": "tsx scripts/publish-maintenance-event.ts"

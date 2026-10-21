@@ -298,6 +298,35 @@ export const config = {
     }
   },
 
+  // -------------------------------------------------------------------
+  // ใบขอเบิก/ขอยืมของสโตร์ (qtec-integra: integra-store-service, Store Control → Request Issue)
+  //   รับ store.request.* จาก exchange integra-drawing แล้วส่งการ์ดด้วย OA HR ไปยัง STORE_REQUEST_LINE_TARGETS
+  //   broker ของ integra อาจไม่ใช่ตัวเดียวกับ MT/ร้องเรียน -> STORE_EVENTS_RABBITMQ_URL (ว่าง = ใช้ RABBITMQ_URL)
+  //   ไม่ตั้งปลายทาง = ปิด
+  // -------------------------------------------------------------------
+  storeRequest: {
+    url: (process.env.STORE_EVENTS_RABBITMQ_URL || process.env.RABBITMQ_URL || '').trim(),
+    exchange: process.env.STORE_EVENT_EXCHANGE || 'integra-drawing',
+    queue: process.env.STORE_EVENT_QUEUE || 'line-workflow.store-request',
+    targets: list(process.env.STORE_REQUEST_LINE_TARGETS),
+    // submitted | approved | rejected | fulfilled | cancelled | all
+    events: ((): string[] => {
+      const v = list((process.env.STORE_REQUEST_LINE_EVENTS || 'approved,fulfilled,cancelled').toLowerCase())
+      return v.includes('all') ? ['submitted', 'approved', 'rejected', 'fulfilled', 'cancelled'] : v
+    })(),
+    // หน้าเว็บ qtec-integra (ปุ่มบนการ์ดเปิด <webUrl>/store-control?view=request&tab=queue)
+    webUrl: (process.env.STORE_REQUEST_WEB_URL || 'https://qtecintegra.com/integra').trim().replace(/\/$/, ''),
+    // กันการ์ดเดิมซ้ำ (เลขใบขอ + ชนิด [+ เลขเอกสารที่จ่าย]) ภายในกี่ชั่วโมง ใช้ตาราง maintenance_alert_dedupe ร่วมกัน
+    dedupeHours: Number(process.env.STORE_REQUEST_DEDUPE_HOURS ?? 24),
+    get enabled(): boolean {
+      return (
+        this.url !== '' &&
+        this.targets.length > 0 &&
+        (process.env.STORE_REQUEST_EVENTS_ENABLED ?? 'true').trim().toLowerCase() !== 'false'
+      )
+    }
+  },
+
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
     password: process.env.ADMIN_PASSWORD ?? 'admin1234',
