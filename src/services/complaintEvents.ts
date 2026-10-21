@@ -1,5 +1,6 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib'
 import { config } from '../config'
+import { closeAbandonedConnection, describeAmqpError, warnIfLocalhostBrokerInContainer } from './amqpUtil'
 import { sendAndLog } from './messaging'
 import { claimForSend } from './maintenanceEvents'
 import { pushReporterUpdate } from './complaintChat'
@@ -176,47 +177,61 @@ async function handleMessage(ch: Channel, msg: ConsumeMessage): Promise<void> {
 async function connect(): Promise<void> {
   const url = /[?&]heartbeat=/.test(cfg.url) ? cfg.url : `${cfg.url}${cfg.url.includes('?') ? '&' : '?'}heartbeat=30`
   const conn = await amqp.connect(url)
-  const ch = await conn.createChannel()
-  await ch.assertExchange(cfg.exchange, 'topic', { durable: true })
-  await ch.assertQueue(cfg.queue, { durable: true })
-  for (const key of cfg.routingKeys) await ch.bindQueue(cfg.queue, cfg.exchange, key)
-  // ทีละข้อความ (ack หลังส่งเสร็จ) ให้การ์ดออกตามลำดับ event: prefetch 3 ทำให้ event ที่ค้างคิว (เช่น หลัง restart/deploy)
-  // ถูกส่งพร้อมกัน แล้วการ์ด "สถานะเปลี่ยน" ไปถึงกลุ่มก่อนการ์ด "เรื่องใหม่" ของเรื่องเดียวกัน (เรื่องร้องเรียนมีไม่มาก ไม่กระทบความเร็ว)
-  await ch.prefetch(1)
-
+  // ผูก listener 'error' ทันที: amqplib โยน error ของ channel ที่ไม่มีใครฟังขึ้นมาเป็น 'error' ของ connection
+  // ถ้ายังไม่ได้ผูกตอน assertExchange/assertQueue ล้ม (เช่น exchange ประกาศไว้คนละชนิด) process จะตายทั้งตัว
   conn.on('error', (err) => {
-    stats.lastError = err instanceof Error ? err.message : String(err)
+    stats.lastError = describeAmqpError(err)
     console.error('[complaint-events] การเชื่อมต่อ RabbitMQ ผิดพลาด:', stats.lastError)
   })
-  conn.on('close', () => {
+  // ต่อ broker ได้แล้วแต่ขั้นถัดไปล้ม (เช่น exchange ถูกประกาศไว้คนละชนิด) ต้องปิด connection ก่อน throw ไม่งั้นค้างทุกรอบที่ลองใหม่
+  try {
+    const ch = await conn.createChannel()
+    ch.on('error', (err) => {
+      stats.lastError = describeAmqpError(err)
+      console.error('[complaint-events] channel RabbitMQ ผิดพลาด:', stats.lastError)
+    })
+    await ch.assertExchange(cfg.exchange, 'topic', { durable: true })
+    await ch.assertQueue(cfg.queue, { durable: true })
+    for (const key of cfg.routingKeys) await ch.bindQueue(cfg.queue, cfg.exchange, key)
+    // ทีละข้อความ (ack หลังส่งเสร็จ) ให้การ์ดออกตามลำดับ event: prefetch 3 ทำให้ event ที่ค้างคิว (เช่น หลัง restart/deploy)
+    // ถูกส่งพร้อมกัน แล้วการ์ด "สถานะเปลี่ยน" ไปถึงกลุ่มก่อนการ์ด "เรื่องใหม่" ของเรื่องเดียวกัน (เรื่องร้องเรียนมีไม่มาก ไม่กระทบความเร็ว)
+    await ch.prefetch(1)
+
+    conn.on('close', () => {
+      connection = null
+      channel = null
+      if (stopping) return
+      console.warn(`[complaint-events] หลุดจาก RabbitMQ จะเชื่อมต่อใหม่ใน ${reconnectDelayMs / 1000}s`)
+      setTimeout(() => void connectWithRetry(), reconnectDelayMs)
+      reconnectDelayMs = Math.min(reconnectDelayMs * 2, 60000)
+    })
+
+    await ch.consume(cfg.queue, (msg) => {
+      if (!msg) return
+      void handleMessage(ch, msg)
+        .catch((err) => {
+          stats.failed++
+          stats.lastError = describeAmqpError(err)
+          console.error(`[complaint-events] ประมวลผล ${msg.fields.routingKey} ไม่สำเร็จ:`, stats.lastError)
+        })
+        .finally(() => {
+          try {
+            ch.ack(msg)
+          } catch {
+            /* channel ปิดแล้ว */
+          }
+        })
+    })
+
+    connection = conn
+    channel = ch
+    reconnectDelayMs = 2000
+  } catch (err) {
     connection = null
     channel = null
-    if (stopping) return
-    console.warn(`[complaint-events] หลุดจาก RabbitMQ จะเชื่อมต่อใหม่ใน ${reconnectDelayMs / 1000}s`)
-    setTimeout(() => void connectWithRetry(), reconnectDelayMs)
-    reconnectDelayMs = Math.min(reconnectDelayMs * 2, 60000)
-  })
-
-  await ch.consume(cfg.queue, (msg) => {
-    if (!msg) return
-    void handleMessage(ch, msg)
-      .catch((err) => {
-        stats.failed++
-        stats.lastError = err instanceof Error ? err.message : String(err)
-        console.error(`[complaint-events] ประมวลผล ${msg.fields.routingKey} ไม่สำเร็จ:`, stats.lastError)
-      })
-      .finally(() => {
-        try {
-          ch.ack(msg)
-        } catch {
-          /* channel ปิดแล้ว */
-        }
-      })
-  })
-
-  connection = conn
-  channel = ch
-  reconnectDelayMs = 2000
+    await closeAbandonedConnection(conn)
+    throw err
+  }
   console.log(`[complaint-events] รับ event จาก RabbitMQ แล้ว (exchange ${cfg.exchange}, queue ${cfg.queue})`)
 }
 
@@ -225,7 +240,7 @@ async function connectWithRetry(): Promise<void> {
   try {
     await connect()
   } catch (err) {
-    stats.lastError = err instanceof Error ? err.message : String(err)
+    stats.lastError = describeAmqpError(err)
     console.error(`[complaint-events] เชื่อมต่อ RabbitMQ ไม่ได้ (${stats.lastError}) จะลองใหม่ใน ${reconnectDelayMs / 1000}s`)
     setTimeout(() => void connectWithRetry(), reconnectDelayMs)
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, 60000)
@@ -237,6 +252,7 @@ export function startComplaintEventConsumer(): void {
     console.log('[complaint-events] ปิดอยู่ (ไม่ได้ตั้ง RABBITMQ_URL หรือ COMPLAINT_EVENTS_ENABLED=false)')
     return
   }
+  warnIfLocalhostBrokerInContainer('complaint-events', cfg.url, 'RABBITMQ_URL')
   stopping = false
   void connectWithRetry()
 }
