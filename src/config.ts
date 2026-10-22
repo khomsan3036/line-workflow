@@ -456,6 +456,14 @@ export const config = {
     lateSiteTime: normalizeTime(process.env.LATE_SITE_TIME, '07:40'),
     lateMaxTime: normalizeTime(process.env.LATE_MAX_TIME, '10:00'),
 
+    // การ์ด "พนักงานเข้างานดีเด่นประจำเดือน" (ไม่ขาด ไม่สาย ไม่ลา) แยก Workshop / Site
+    //   PERFECT_REPORT_CRON = ค่าเริ่มต้นวันที่ 1 ของเดือน 09:10 (สรุปเดือนที่แล้ว) ว่าง = ปิด
+    //   PERFECT_REPORT_GROUP_IDS = ปลายทางคั่นด้วยจุลภาค (C... กลุ่ม / U... ผู้ใช้ทดสอบ) ว่าง = ไม่ส่ง
+    //   PERFECT_REPORT_TOP = รายชื่อต่อสถานที่ (ค่าเริ่มต้น 10, สูงสุด 20) เวลาเข้างานใช้ LATE_WORKSHOP_TIME / LATE_SITE_TIME
+    perfectReportCron: (process.env.PERFECT_REPORT_CRON ?? '10 9 1 * *').trim(),
+    perfectReportTargets: list(process.env.PERFECT_REPORT_GROUP_IDS),
+    perfectReportTop: Math.min(20, Math.max(1, Number(process.env.PERFECT_REPORT_TOP) || 10)),
+
     // ประกาศ "Monthly Cleaning Day" (วันเสาร์สุดท้ายของเดือน)
     //   CLEANING_DAY_CRON = รอบที่ตรวจว่าวันนี้ต้องแจ้งไหม ค่าเริ่มต้น 08:00 และ 17:00 ทุกวัน (ว่าง = ปิด)
     //   แจ้งล่วงหน้า CLEANING_DAY_DAYS_BEFORE วัน (ค่าเริ่มต้น 3 -> 1/3, 2/3, 3/3) + วันเสาร์นั้นเอง แล้วหยุดจนถึงรอบเดือนหน้า
@@ -463,6 +471,10 @@ export const config = {
     cleaningDayCron: (process.env.CLEANING_DAY_CRON ?? '0 8,17 * * *').trim(),
     cleaningDayTargets: list(process.env.CLEANING_DAY_GROUP_IDS),
     cleaningDayDaysBefore: Math.min(7, Math.max(0, Number(process.env.CLEANING_DAY_DAYS_BEFORE ?? 3) || 0)),
+    //   CLEANING_DAY_START_TIME = เวลาเริ่มกิจกรรมวันเสาร์นั้น (ค่าเริ่มต้น 15:30) CLEANING_DAY_START_LEAD_MIN = แจ้ง "อีก N นาทีเริ่ม"
+    //   ก่อนเวลานั้นกี่นาที (ค่าเริ่มต้น 15 -> ส่ง 15:15) 0 = ปิดรอบนี้
+    cleaningDayStartTime: normalizeTime(process.env.CLEANING_DAY_START_TIME, '15:30'),
+    cleaningDayStartLeadMin: Math.min(180, Math.max(0, Number(process.env.CLEANING_DAY_START_LEAD_MIN ?? 15) || 0)),
     cleaningDayMessage:
       (process.env.CLEANING_DAY_MESSAGE ?? '').trim() ||
       'ขอความร่วมมือพนักงานทุกท่าน ร่วมกันจัดระเบียบและทำความสะอาดพื้นที่ทำงานส่วนตัว รวมถึงพื้นที่ส่วนกลาง ในกิจกรรม Monthly Cleaning Day ประจำเดือนนี้ เพื่อสร้างบรรยากาศการทำงานที่สดชื่นและปลอดภัยสำหรับทุกคน'

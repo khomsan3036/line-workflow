@@ -7,6 +7,7 @@ import { runOvertimeReport } from './jobs/overtimeReport'
 import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
 import { runAbsenceReport } from './jobs/absenceReport'
 import { runLatenessReport } from './jobs/latenessReport'
+import { runPerfectAttendanceReport } from './jobs/perfectAttendanceReport'
 import { runComplaintDigest } from './services/complaintChat'
 import { printDocumentExpiryRun, runDocumentExpiryDispatch } from './services/documentExpiryDispatch'
 
@@ -160,6 +161,31 @@ export function startScheduler(): void {
     console.log(`[scheduler] ตั้งงานมาสายติดต่อกันไว้ที่ "${lateCron}" (${tz}) -> ${config.scheduler.lateReportTargets.length} ปลายทาง`)
   }
 
+  // การ์ด "พนักงานเข้างานดีเด่นประจำเดือน" (ค่าเริ่มต้นวันที่ 1 เวลา 09:10 สรุปเดือนที่แล้ว) ว่าง / ไม่มีปลายทาง = ปิด
+  const perfectCron = config.scheduler.perfectReportCron
+  if (perfectCron && !cron.validate(perfectCron)) {
+    console.error(`[scheduler] รูปแบบ PERFECT_REPORT_CRON ไม่ถูกต้อง: ${perfectCron}`)
+  } else if (perfectCron && config.scheduler.perfectReportTargets.length > 0) {
+    cron.schedule(
+      perfectCron,
+      async () => {
+        console.log(`[scheduler] เริ่มงานพนักงานเข้างานดีเด่น ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        try {
+          const outcome = await runPerfectAttendanceReport({ sentBy: 'scheduler:perfect-attendance' })
+          if (outcome.sendStatus === 'not-configured') {
+            console.warn('[scheduler]   ข้าม: ยังไม่ได้ตั้ง DATABASE_URL_MSSQL')
+            return
+          }
+          for (const t of outcome.targets) console.log(`[scheduler]   ดีเด่น -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานพนักงานเข้างานดีเด่นผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานพนักงานเข้างานดีเด่นไว้ที่ "${perfectCron}" (${tz}) -> ${config.scheduler.perfectReportTargets.length} ปลายทาง`)
+  }
+
   // ประกาศ "Monthly Cleaning Day": ตรวจทุกรอบ (ค่าเริ่มต้น 08:00 และ 17:00) งานตัดสินเองว่าวันนี้ต้องแจ้งไหม ว่าง = ปิด
   const cleaningCron = config.scheduler.cleaningDayCron
   if (cleaningCron && !cron.validate(cleaningCron)) {
@@ -179,6 +205,28 @@ export function startScheduler(): void {
       { timezone: tz }
     )
     console.log(`[scheduler] ตั้งงานประกาศ Cleaning Day ไว้ที่ "${cleaningCron}" (${tz}) -> ${config.scheduler.cleaningDayTargets.length} ปลายทาง`)
+  }
+
+  // รอบ "ก่อนเริ่มกิจกรรม" ของ Cleaning Day: ทุกวันเสาร์เวลา (CLEANING_DAY_START_TIME - CLEANING_DAY_START_LEAD_MIN) งานส่งเฉพาะเสาร์สุดท้าย
+  // ใช้ปลายทางเดียวกับประกาศ ว่าง / LEAD_MIN = 0 = ปิด
+  if (config.scheduler.cleaningDayStartLeadMin > 0 && config.scheduler.cleaningDayTargets.length > 0) {
+    const [h, m] = config.scheduler.cleaningDayStartTime.split(':').map(Number)
+    const total = (h * 60 + m - config.scheduler.cleaningDayStartLeadMin + 1440) % 1440
+    const startCron = `${total % 60} ${Math.floor(total / 60)} * * 6`
+    cron.schedule(
+      startCron,
+      async () => {
+        try {
+          const outcome = await runCleaningDayReminder({ slot: 'start', dedupe: true, sentBy: 'scheduler:cleaning-day' })
+          if (!outcome.notice) return
+          for (const t of outcome.targets) console.log(`[scheduler]   Cleaning Day ก่อนเริ่ม -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานแจ้งก่อนเริ่ม Cleaning Day ผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานแจ้งก่อนเริ่ม Cleaning Day ไว้ที่ "${startCron}" (${tz}, เริ่ม ${config.scheduler.cleaningDayStartTime} แจ้งก่อน ${config.scheduler.cleaningDayStartLeadMin} นาที)`)
   }
 
   // OA ทีมซ่อมบำรุง: การ์ด "งานซ่อมค้างวันนี้" และ "แจ้งเตือนงานซ่อมเร่งด่วน" (ว่าง = ปิดงานนั้น)

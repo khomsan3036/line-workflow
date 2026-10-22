@@ -10,6 +10,8 @@ import { sendAndLog } from '../services/messaging'
 // CLEANING_DAY_CRON (ค่าเริ่มต้น 08:00 และ 17:00 ทุกวัน) เรียก runCleaningDayReminder แล้วงานนี้ตัดสินเองว่าวันนี้ต้องส่งอะไร:
 //   N วันก่อน ... 1 วันก่อน  -> การ์ดนับถอยหลัง 1/N ... N/N (N = CLEANING_DAY_DAYS_BEFORE ค่าเริ่มต้น 3)
 //   วันเสาร์นั้น เช้า / เย็น  -> "วันนี้คือ Cleaning Day" / "ขอบคุณทุกคน"
+//   วันเสาร์นั้น slot "start" -> "อีก 15 นาทีเริ่มแล้ว" ส่งโดย cron แยก (CLEANING_DAY_START_TIME ลบ CLEANING_DAY_START_LEAD_MIN
+//                               ค่าเริ่มต้น 15:30 - 15 = 15:15 ทุกวันเสาร์ งานนี้ส่งเฉพาะเสาร์สุดท้ายของเดือน)
 //   วันอื่น (รวมถึงหลังวันเสาร์สุดท้ายไปแล้ว) -> ไม่ส่ง จนถึงช่วงแจ้งของเดือนหน้า
 // ทุกวันที่คิดเป็นสตริง YYYY-MM-DD ตาม config.timezone (ไม่ใช้เวลาเครื่อง)
 // ---------------------------------------------------------------------------
@@ -37,6 +39,11 @@ export function cleaningDayNoticeFor(date: string, slot: CleaningDaySlot, daysBe
   const eventDate = lastSaturdayOfMonth(date)
   const daysLeft = daysBetween(date, eventDate)
   if (daysLeft < 0 || daysLeft > daysBefore) return null
+  // รอบ "ก่อนเริ่ม" มีเฉพาะวันกิจกรรม วันอื่นไม่ส่ง
+  if (slot === 'start') {
+    if (daysLeft !== 0) return null
+    return { kind: 'starting', eventDate, startTime: config.scheduler.cleaningDayStartTime, minutesLeft: config.scheduler.cleaningDayStartLeadMin, slot }
+  }
   if (daysLeft === 0) {
     if (slot === 'morning') return { kind: 'today', eventDate, slot }
     return { kind: 'thanks', eventDate, nextEventDate: lastSaturdayOfMonth(addDays(eventDate, 7)), slot }

@@ -4,6 +4,7 @@ import { formatThaiDate } from './attendanceQuery'
 // การ์ดประกาศ "Monthly Cleaning Day" (วันเสาร์สุดท้ายของเดือน)
 //   countdown : แจ้งล่วงหน้า 1/3, 2/3, 3/3 (ช่วงเช้า / ช่วงเย็น)
 //   today     : เช้าวันเสาร์ "วันนี้คือ Cleaning Day"
+//   starting  : ก่อนเริ่มกิจกรรม 15 นาที (15:15 สำหรับเริ่ม 15:30) "อีก 15 นาทีเริ่มแล้ว" + เช็กลิสต์เตรียมตัว
 //   thanks    : เย็นวันเสาร์ ขอบคุณ + วันของเดือนหน้า
 //
 // หัวการ์ดเป็น gradient โทนเขียวน้ำทะเลเข้ม (ตัวอักษรขาวอ่านชัด ~5:1) และใส่ backgroundColor สีทึบไว้ด้วย
@@ -12,11 +13,12 @@ import { formatThaiDate } from './attendanceQuery'
 // แถบความคืบหน้าจึงทำด้วย span ของจุด ● ○ แทน box สี
 // ---------------------------------------------------------------------------
 
-export type CleaningDaySlot = 'morning' | 'evening'
+export type CleaningDaySlot = 'morning' | 'start' | 'evening'
 
 export type CleaningDayNotice =
   | { kind: 'countdown'; eventDate: string; step: number; total: number; daysLeft: number; slot: CleaningDaySlot }
   | { kind: 'today'; eventDate: string; slot: CleaningDaySlot }
+  | { kind: 'starting'; eventDate: string; startTime: string; minutesLeft: number; slot: CleaningDaySlot }
   | { kind: 'thanks'; eventDate: string; nextEventDate: string; slot: CleaningDaySlot }
 
 const TEAL_DARK = '#0F766E'
@@ -88,8 +90,11 @@ function progressDots(step: number, total: number) {
 }
 
 function slotLabel(slot: CleaningDaySlot): string {
-  return slot === 'morning' ? '☀️ แจ้งเตือนช่วงเช้า' : '🌇 แจ้งเตือนช่วงเย็น'
+  return slot === 'morning' ? '☀️ แจ้งเตือนช่วงเช้า' : slot === 'start' ? '⏰ แจ้งเตือนก่อนเริ่มกิจกรรม' : '🌇 แจ้งเตือนช่วงเย็น'
 }
+
+const AMBER_BG = '#FFFBEB'
+const AMBER_INK = '#92400E'
 
 function header(n: CleaningDayNotice) {
   const badge =
@@ -97,7 +102,9 @@ function header(n: CleaningDayNotice) {
       ? chip(`แจ้งเตือน ${n.step}/${n.total}`, WHITE, TEAL_INK)
       : n.kind === 'today'
         ? chip('วันนี้!', WHITE, TEAL_INK)
-        : chip('ขอบคุณ 💚', WHITE, TEAL_INK)
+        : n.kind === 'starting'
+          ? chip(`อีก ${n.minutesLeft} นาที ⏰`, WHITE, TEAL_INK)
+          : chip('ขอบคุณ 💚', WHITE, TEAL_INK)
   return {
     type: 'box',
     layout: 'vertical',
@@ -139,7 +146,9 @@ function spotlight(n: CleaningDayNotice) {
         }
       : n.kind === 'today'
         ? { left: big('🎉'), title: 'วันนี้คือ Cleaning Day', sub: 'มาช่วยกันทำให้ที่ทำงานน่าอยู่กันเถอะ' }
-        : {
+        : n.kind === 'starting'
+          ? { left: big(String(n.minutesLeft)), title: `อีก ${n.minutesLeft} นาที เริ่มแล้ว!`, sub: `เริ่มกิจกรรมเวลา ${n.startTime} น. เตรียมตัวให้พร้อมนะ` }
+          : {
             left: big('✨'),
             title: 'ที่ทำงานสะอาดขึ้นเพราะทุกคน',
             sub: `เจอกันใหม่ วัน${formatThaiDate(n.nextEventDate, { year: false })}`
@@ -177,7 +186,35 @@ function spotlight(n: CleaningDayNotice) {
 
 export function buildCleaningDayCard(n: CleaningDayNotice, message: string): { contents: unknown; altText: string } {
   const body: unknown[] = [spotlight(n)]
-  if (n.kind === 'thanks') {
+  if (n.kind === 'starting') {
+    body.push(
+      {
+        type: 'box',
+        layout: 'horizontal',
+        spacing: 'sm',
+        contents: [
+          chip(`🕒 เริ่ม ${n.startTime} น.`, TEAL_TINT, TEAL_INK),
+          chip(`📅 วันนี้ ${formatThaiDate(n.eventDate, { weekday: false, year: false })}`, TEAL_TINT, TEAL_INK),
+          { type: 'filler' }
+        ]
+      },
+      { type: 'text', text: 'ใกล้ถึงเวลา Monthly Cleaning Day แล้ว เก็บงานตรงหน้าให้เรียบร้อย แล้วมาเจอกันที่พื้นที่ของแต่ละทีมตรงเวลานะครับ', size: 'sm', color: BODY, wrap: true, lineSpacing: '6px' },
+      { type: 'separator', margin: 'md', color: '#E5E7EB' },
+      { type: 'text', text: 'เตรียมตัวก่อนเริ่ม', size: 'xs', color: MUTED, weight: 'bold', margin: 'md', wrap: true },
+      checkRow('🧤', 'หยิบถุงมือ ถุงขยะ และผ้าเช็ดทำความสะอาด'),
+      checkRow('🗂️', 'เริ่มจากโต๊ะและพื้นที่ของตัวเอง แล้วไปช่วยส่วนกลาง'),
+      checkRow('🤝', 'ชวนเพื่อนข้าง ๆ ไปด้วยกัน ทำเป็นทีมเสร็จไวกว่า'),
+      {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: AMBER_BG,
+        cornerRadius: '10px',
+        paddingAll: '10px',
+        margin: 'md',
+        contents: [{ type: 'text', text: '💡 เสร็จแล้วอย่าลืมแยกขยะและเก็บอุปกรณ์เข้าที่ ขอบคุณทุกคนล่วงหน้าครับ', size: 'xs', color: AMBER_INK, wrap: true }]
+      }
+    )
+  } else if (n.kind === 'thanks') {
     body.push({
       type: 'text',
       text: 'ขอบคุณพนักงานทุกท่านที่ร่วมกันจัดระเบียบและทำความสะอาดพื้นที่ทำงานในวันนี้ ความร่วมมือของทุกคนทำให้บรรยากาศการทำงานสดชื่นและปลอดภัยยิ่งขึ้น',
@@ -221,6 +258,8 @@ export function buildCleaningDayCard(n: CleaningDayNotice, message: string): { c
       ? `📢 Monthly Cleaning Day ${when} · แจ้งเตือน ${n.step}/${n.total} (${n.daysLeft === 1 ? 'พรุ่งนี้' : `อีก ${n.daysLeft} วัน`})`
       : n.kind === 'today'
         ? `📢 วันนี้คือ Monthly Cleaning Day (${when}) มาช่วยกันจัดระเบียบและทำความสะอาดกันนะ`
-        : `💚 ขอบคุณทุกคนที่ร่วม Monthly Cleaning Day (${when})`
+        : n.kind === 'starting'
+          ? `⏰ อีก ${n.minutesLeft} นาที Monthly Cleaning Day เริ่มแล้ว (${n.startTime} น.) เตรียมตัวให้พร้อมนะ`
+          : `💚 ขอบคุณทุกคนที่ร่วม Monthly Cleaning Day (${when})`
   return { contents, altText }
 }
