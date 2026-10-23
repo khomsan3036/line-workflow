@@ -157,17 +157,27 @@ function matchName(
   t: string,
   names: string[],
   aliases: Record<string, string[]>,
-  allowAliases: boolean
+  allowAliases: boolean,
+  accept: (name: string, word: string) => boolean = () => true
 ): { name: string; word: string } | undefined {
   const candidates = names
     .map((name) => ({ name, words: [name, ...(allowAliases ? (aliases[name] ?? []) : [])] }))
     .sort((a, b) => b.name.length - a.name.length)
   for (const c of candidates) {
     const words = [...c.words].sort((a, b) => b.length - a.length)
-    const word = words.find((w) => containsWord(t, w))
+    const word = words.find((w) => containsWord(t, w) && accept(c.name, w.toLowerCase()))
     if (word) return { name: c.name, word: word.toLowerCase() }
   }
   return undefined
+}
+
+const DEPARTMENT_LABEL = /แผนก|ฝ่าย|department|dept\.?/
+const POSITION_LABEL = /ตำแหน่ง|position/
+
+/** คำนี้มีคำบอกชนิด (แผนก/ตำแหน่ง) นำหน้าอยู่ในข้อความหรือไม่ เช่น "แผนก procurement" */
+function labeledAs(t: string, label: RegExp, word: string): boolean {
+  const w = word.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  return new RegExp(`(?:${label.source})\\s*${w}`).test(t)
 }
 
 export const GROUP_LABELS: Record<GroupBy, string> = {
@@ -379,10 +389,19 @@ export function parseAttendanceQuery(
   options: { departments?: string[]; positions?: string[] } = {}
 ): AttendanceQuery | null {
   const t = normalize(text)
+  const departments = options.departments ?? []
+  // ชื่อที่เป็นทั้งแผนกและตำแหน่งใน MANPOWER_HR (Procurement, Administration, Safety, Maintenance, Civil):
+  // ถือเป็นตำแหน่งต่อเมื่อพิมพ์ "ตำแหน่ง X" ไม่งั้นเป็นแผนก ("แผนก Procurement ตามตำแหน่ง" เคยถูกอ่านเป็น
+  // ตำแหน่ง Procurement แล้วแยกตามแผนก จนการ์ดโชว์แค่ Administration คนเดียว)
+  const isDepartmentWord = (word: string) =>
+    !labeledAs(t, POSITION_LABEL, word) &&
+    (labeledAs(t, DEPARTMENT_LABEL, word) || departments.some((d) => d.toLowerCase() === word))
   // ตัวกรองตำแหน่งก่อน แล้วตัดคำที่จับได้ออกก่อนหาแผนก ("ตำแหน่ง Safety Supervisor" จะได้ไม่กลายเป็นแผนก HSE)
-  const positionHit = t.includes('ทุกตำแหน่ง') ? undefined : matchName(t, options.positions ?? [], POSITION_ALIASES, /ตำแหน่ง|position/.test(t))
+  const positionHit = t.includes('ทุกตำแหน่ง')
+    ? undefined
+    : matchName(t, options.positions ?? [], POSITION_ALIASES, /ตำแหน่ง|position/.test(t), (_name, word) => !isDepartmentWord(word))
   const rest = positionHit ? t.replace(positionHit.word, ' ') : t
-  const department = rest.includes('ทุกแผนก') ? undefined : detectDepartment(rest, options.departments ?? [])
+  const department = rest.includes('ทุกแผนก') ? undefined : detectDepartment(rest, departments)
   const position = positionHit?.name
 
   // "แผนก IT" / "ตำแหน่ง Foreman" ก็ถือเป็นคำถามเรื่องเข้างาน แม้ไม่มีคำว่าสรุปพนักงาน
