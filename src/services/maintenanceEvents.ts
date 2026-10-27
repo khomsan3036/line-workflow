@@ -5,6 +5,8 @@ import { query, queryOne } from '../db'
 import { MAX_ALERT_IMAGES, normalizeAlert, type AlertImage, type AlertSeverity, type GroupAlert } from './maintenanceFlex'
 import { buildExpiryDigestCard, expiryDigestToText, parseExpiryDigest } from './documentExpiryFlex'
 import { pushAlertToGroups } from './maintenanceLocalTools'
+import { resolvePersonName } from './hrDirectory'
+import { buildFuelRequestCard, fuelRequestCardToText, type FuelUsageSummary } from './fuelRequestFlex'
 
 // ---------------------------------------------------------------------------
 // Consumer ของ RabbitMQ: รับ event จากระบบซ่อมบำรุง (exchange "maintenance") แล้วแจ้งเข้าไลน์กลุ่มของทีม
@@ -26,7 +28,39 @@ import { pushAlertToGroups } from './maintenanceLocalTools'
 type Json = Record<string, unknown>
 
 const REPAIR_SEVERITY = ['Emergency', 'High', 'Normal']
+const REPAIR_STATUS = ['Reported', 'PendingApproval', 'Approved', 'Assigned', 'InProgress', 'OnHold', 'Completed', 'Closed', 'Rejected', 'Cancelled']
+const REPAIR_STATUS_THAI: Record<string, string> = {
+  Reported: 'แจ้งซ่อม',
+  PendingApproval: 'รออนุมัติ',
+  Approved: 'อนุมัติแล้ว',
+  Assigned: 'มอบหมายแล้ว',
+  InProgress: 'กำลังดำเนินการ',
+  OnHold: 'พักงาน',
+  Completed: 'เสร็จสิ้น',
+  Closed: 'ปิดงาน',
+  Rejected: 'ไม่อนุมัติ',
+  Cancelled: 'ยกเลิก'
+}
 const REQUEST_STATUS = ['Draft', 'Submitted', 'PendingApproval', 'Approved', 'Rejected', 'Fulfilled', 'Closed', 'Cancelled']
+const REQUEST_STATUS_THAI: Record<string, string> = {
+  Draft: 'ฉบับร่าง',
+  Submitted: 'ส่งคำขอแล้ว',
+  PendingApproval: 'รออนุมัติ',
+  Approved: 'อนุมัติแล้ว',
+  Rejected: 'ไม่อนุมัติ',
+  Fulfilled: 'เติมแล้ว',
+  Closed: 'ปิดงาน',
+  Cancelled: 'ยกเลิก'
+}
+const WORK_LOCATION = ['Workshop', 'Site']
+/** ชื่อไทยของ FuelType (enum ของ fuel service: Diesel, Gasoline91, Gasoline95, Gasohol, NGV, LPG, EV, EngineOil) */
+const FUEL_TYPE_THAI: Record<string, string> = { Diesel: 'ดีเซล', Gasoline91: 'เบนซิน 91', Gasoline95: 'เบนซิน 95', Gasohol: 'แก๊สโซฮอล์', NGV: 'NGV', LPG: 'LPG', EV: 'ไฟฟ้า (EV)', EngineOil: 'น้ำมันเครื่อง' }
+
+/** โรงงาน / หน้างาน จากค่า Workshop | Site (ตัวเลขหรือชื่อ) ว่างเมื่อไม่รู้ */
+function locationThai(v: unknown): string {
+  const name = enumName(v, WORK_LOCATION)
+  return name === 'Site' ? 'หน้างาน' : name === 'Workshop' ? 'โรงงาน' : ''
+}
 
 let connection: ChannelModel | null = null
 let channel: Channel | null = null
@@ -264,6 +298,60 @@ function attachUploadedPhoto(e: Json): 'attached' | 'ignored' {
   return 'attached'
 }
 
+/**
+ * สถานะล่าสุดของใบงานจาก repair service (ชื่อ enum เช่น "PendingApproval"; '' = อ่านไม่ได้)
+ * event repair.requested ออกตอนสร้างใบงานซึ่งยังเป็น "แจ้งซ่อม" แต่เว็บ/มือถือจะส่งขออนุมัติต่อทันที
+ * การ์ดถูกส่งหลังรอรูปอยู่แล้ว จึงอ่านสถานะจริง ณ ตอนส่งแทนที่จะเชื่อค่าใน event
+ */
+async function fetchRepairStatus(repairId: string): Promise<string> {
+  const base = config.maintenance.repairApiUrl
+  if (!base || !repairId) return ''
+  try {
+    const res = await fetch(`${base}/api/repair-requests/${encodeURIComponent(repairId)}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!res.ok) return ''
+    const body = (await res.json()) as { data?: { repairStatus?: unknown } }
+    return enumName(body.data?.repairStatus, REPAIR_STATUS)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * รายงานการใช้น้ำมันของรถหนึ่งคัน (fuel-usage-report?vehicleCode=) สำหรับส่วน "ความคุ้มค่า" บนการ์ดเบิกน้ำมัน
+ * null = ไม่มีข้อมูล/อ่านไม่ได้ (การ์ดแสดงส่วนอื่นตามปกติ)
+ */
+async function fetchFuelUsage(vehicleCode: string): Promise<FuelUsageSummary | null> {
+  const base = config.maintenance.fuelApiUrl
+  if (!base || !vehicleCode) return null
+  try {
+    const res = await fetch(`${base}/api/fuel-requests/fuel-usage-report?vehicleCode=${encodeURIComponent(vehicleCode)}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { data?: Json[] | Json }
+    const rows = Array.isArray(body.data) ? body.data : body.data ? [body.data] : []
+    const r = rows.find((x) => str(x.vehicleCode).toLowerCase() === vehicleCode.toLowerCase()) ?? rows[0]
+    if (!r) return null
+    const n = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null)
+    return {
+      basis: enumName(r.usageBasis, ['Odometer', 'WorkingHours']) === 'WorkingHours' ? 'WorkingHours' : 'Odometer',
+      kmPerLiter: n(r.kmPerLiter),
+      targetKmPerLiter: n(r.targetKmPerLiter) ?? 0,
+      kmDriven: n(r.kmDriven),
+      totalLiters: n(r.totalLiters) ?? 0,
+      requestCount: n(r.requestCount) ?? 0,
+      diffBaht: n(r.diffBaht),
+      badge: str(r.badge).toLowerCase() || null
+    }
+  } catch {
+    return null
+  }
+}
+
 /** พักการ์ดแจ้งซ่อมไว้รอรูป แล้วคืนรูปที่รวบรวมได้ (ว่างได้) */
 function waitForRepairPhotos(repairId: string): Promise<AlertImage[]> {
   const cfg = config.maintenance.events.repairPhotos
@@ -292,16 +380,17 @@ function waitForRepairPhotos(repairId: string): Promise<AlertImage[]> {
 // แปลง event แต่ละชนิดเป็นการ์ดแจ้งเตือน
 // ---------------------------------------------------------------------------
 
-function fromRepairRequested(e: Json, images: AlertImage[] = []): GroupAlert {
+function fromRepairRequested(e: Json, images: AlertImage[] = [], reporterName = '', status = ''): GroupAlert {
   const severity = enumName(e.severity, REPAIR_SEVERITY)
   const tone: AlertSeverity = severity === 'Emergency' ? 'urgent' : severity === 'High' ? 'warning' : 'info'
   const severityThai = severity === 'Emergency' ? 'ฉุกเฉิน' : severity === 'High' ? 'สูง' : 'ปกติ'
   const asset = str(e.assetCode)
   // event รุ่นใหม่มีเลขที่ใบงาน (REP-yyyyMM-####) และสถานที่; รุ่นเก่ามีแต่ id
   const reportedNo = str(e.reportedNo)
-  const location = enumName(e.location, ['Workshop', 'Site'])
-  const locationThai = location === 'Site' ? 'หน้างาน' : location === 'Workshop' ? 'โรงงาน' : ''
   const repairId = str(e.repairRequestId)
+  // ผู้แจ้ง: ชื่อจากทะเบียน HR ถ้าหาได้ ไม่ได้ก็อีเมล/บัญชีที่ประทับมา
+  const reporter = reporterName || str(e.by)
+  const statusThai = REPAIR_STATUS_THAI[status] ?? status
   return normalizeAlert(
     {
       title: `แจ้งซ่อมใหม่ ${reportedNo || asset || shortId(repairId)}`,
@@ -310,46 +399,72 @@ function fromRepairRequested(e: Json, images: AlertImage[] = []): GroupAlert {
       details: details([
         ['ความรุนแรง', severityThai],
         ['ทรัพย์สิน', asset],
-        ['สถานที่', locationThai],
-        ['ผู้แจ้ง', str(e.by)],
-        ['งานเลขที่', reportedNo || shortId(repairId)]
+        ['สถานที่', locationThai(e.location)],
+        ['ผู้แจ้ง', reporter],
+        ['งานเลขที่', reportedNo || shortId(repairId)],
+        ['สถานะ', statusThai]
       ]),
       // ลิงก์ตรงไปหน้าสถานะของใบงานนี้ (หน้าเดียวกับที่อีเมลแจ้งเตือนพาไป)
       actions: webAction('เปิดงานซ่อม', repairId ? `/services/maintenance-request/status?id=${encodeURIComponent(repairId)}` : '/services/maintenance-request'),
       reference: reportedNo || asset || shortId(repairId),
       images
     },
-    str(e.by) || 'ระบบซ่อมบำรุง'
+    reporter || 'ระบบซ่อมบำรุง'
   )
 }
 
-function fromFuelRequested(e: Json): GroupAlert {
+/**
+ * ขอเบิกน้ำมัน (FuelRequestedEvent)
+ * ผู้ขอ: ชื่อเต็มจากทะเบียน HR (ตามอีเมลผู้ขอ/บัญชีที่ประทับ) ถ้าหาได้ — requesterName ใน event
+ * จากเว็บรุ่นเก่ามีแต่ชื่อไม่มีนามสกุล; สถานะแปลเป็นไทย (event ส่งชื่อ enum หรือตัวเลข)
+ */
+function fromFuelRequested(e: Json, requesterFullName = '', usage: FuelUsageSummary | null = null): GroupAlert {
   const vehicle = [str(e.vehicleCode), str(e.vehicleName)].filter(Boolean).join(' ')
   const auto = e.autoApproved === true
   const status = enumName(e.requestStatus, REQUEST_STATUS)
+  const statusThai = REQUEST_STATUS_THAI[status] ?? status
   const liters = Number(e.requestedLiters)
-  return normalizeAlert(
+  const requester = requesterFullName || str(e.requesterName) || str(e.requesterEmail) || str(e.by)
+  const fuelType = str(e.fuelType)
+  const base = normalizeAlert(
     {
       title: `ขอเบิกน้ำมัน ${str(e.requestNo) || shortId(e.fuelRequestId)}`,
-      message: `${str(e.requesterName) ? `คุณ${str(e.requesterName)} ` : ''}ขอเบิกน้ำมันให้ ${vehicle || 'รถที่ไม่ระบุ'} ${
-        auto ? 'อนุมัติอัตโนมัติแล้ว' : 'รออนุมัติ'
+      message: `${requester ? `คุณ${requester} ` : ''}ขอเบิกน้ำมันให้ ${vehicle || 'รถที่ไม่ระบุ'} ${
+        auto ? 'อนุมัติอัตโนมัติแล้ว' : statusThai || 'รออนุมัติ'
       }`,
       severity: auto ? 'info' : 'warning',
       details: details([
         ['รถ', vehicle],
-        ['ประเภทน้ำมัน', str(e.fuelType)],
+        ['ประเภทน้ำมัน', FUEL_TYPE_THAI[fuelType] ?? fuelType],
         ['จำนวน', `${Number.isFinite(liters) ? liters.toLocaleString('th-TH') : str(e.requestedLiters)} ลิตร`],
         ['ประมาณค่าใช้จ่าย', `${money(e.estimatedCost)} บาท`],
-        ['ผู้ขอ', str(e.requesterName)],
+        ['ผู้ขอ', requester],
         ['โครงการ', str(e.projectCode)],
+        ['สถานที่', locationThai(e.location)],
         ['เลขไมล์', Number(e.odometer) > 0 ? `${Number(e.odometer).toLocaleString('th-TH')} กม.` : ''],
-        ['สถานะ', status]
+        ['สถานะ', statusThai]
       ]),
       actions: webAction('เปิดหน้าอนุมัติ', '/services/fuel-request'),
       reference: str(e.requestNo) || undefined
     },
-    str(e.requesterName) || str(e.by) || 'ระบบซ่อมบำรุง'
+    requester || 'ระบบซ่อมบำรุง'
   )
+  // การ์ดเฉพาะทาง: ไฮไลต์ปริมาณ + ส่วนความคุ้มค่าของรถ (base ยังใช้เป็น altText/ข้อความสำรอง)
+  const card = {
+    requestNo: str(e.requestNo) || shortId(e.fuelRequestId),
+    vehicle,
+    requester,
+    fuelType: FUEL_TYPE_THAI[fuelType] ?? fuelType,
+    liters: Number.isFinite(liters) ? liters : null,
+    estimatedCost: Number.isFinite(Number(e.estimatedCost)) ? Number(e.estimatedCost) : null,
+    projectCode: str(e.projectCode),
+    location: locationThai(e.location),
+    odometer: Number.isFinite(Number(e.odometer)) ? Number(e.odometer) : null,
+    status: statusThai,
+    autoApproved: auto,
+    usage
+  }
+  return { ...base, custom: buildFuelRequestCard(card), customText: fuelRequestCardToText(card) }
 }
 
 /**
@@ -445,9 +560,16 @@ function fromNotificationPayload(e: Json): GroupAlert {
   )
 }
 
-export function mapEventToAlert(routingKey: string, e: Json, images: AlertImage[] = []): GroupAlert | null {
-  if (routingKey === 'repair.requested') return fromRepairRequested(e, images)
-  if (routingKey === 'fuel.requested') return fromFuelRequested(e)
+export function mapEventToAlert(
+  routingKey: string,
+  e: Json,
+  images: AlertImage[] = [],
+  reporterName = '',
+  status = '',
+  usage: FuelUsageSummary | null = null
+): GroupAlert | null {
+  if (routingKey === 'repair.requested') return fromRepairRequested(e, images, reporterName, status)
+  if (routingKey === 'fuel.requested') return fromFuelRequested(e, reporterName, usage)
   if (routingKey === 'vehicle.booking.requested') return fromVehicleBookingRequested(e)
   if (/^maintenance\.[a-z]+\.notification$/.test(routingKey)) return fromNotificationPayload(e)
   return null
@@ -487,12 +609,28 @@ async function handleMessage(msg: ConsumeMessage): Promise<void> {
 
   // แจ้งซ่อมใหม่: พักการ์ดรอรูปก่อนซ่อมที่กำลังอัปโหลดตามมา (ดูคำอธิบายที่ pendingRepairs)
   let images: AlertImage[] = []
+  let reporterName = ''
+  let status = ''
+  let usage: FuelUsageSummary | null = null
   if (key === 'repair.requested') {
-    images = await waitForRepairPhotos(str(payload.repairRequestId))
-    if (images.length > 0) console.log(`[MT-events] ${key}: ได้รูปก่อนซ่อม ${images.length} รูปสำหรับใบงาน ${shortId(payload.repairRequestId)}`)
+    const repairId = str(payload.repairRequestId)
+    // หาชื่อผู้แจ้งจาก HR ระหว่างรอรูป แล้วค่อยอ่านสถานะล่าสุดหลังรอ (ตอนนั้นเว็บส่งขออนุมัติไปแล้ว) ทั้งหมด best-effort
+    const [photos, name] = await Promise.all([waitForRepairPhotos(repairId), resolvePersonName(str(payload.by)).catch(() => null)])
+    images = photos
+    reporterName = name ?? ''
+    status = await fetchRepairStatus(repairId)
+    if (images.length > 0) console.log(`[MT-events] ${key}: ได้รูปก่อนซ่อม ${images.length} รูปสำหรับใบงาน ${shortId(repairId)}`)
+  } else if (key === 'fuel.requested') {
+    // ชื่อเต็มผู้ขอจาก HR (ตามอีเมลผู้ขอก่อน ไม่ได้ก็บัญชีที่ประทับ) และรายงานความคุ้มค่าของรถคันนั้น
+    const [name, report] = await Promise.all([
+      resolvePersonName(str(payload.requesterEmail) || str(payload.by)).catch(() => null),
+      fetchFuelUsage(str(payload.vehicleCode))
+    ])
+    reporterName = name ?? ''
+    usage = report
   }
 
-  const alert = mapEventToAlert(key, payload, images)
+  const alert = mapEventToAlert(key, payload, images, reporterName, status, usage)
   if (!alert) {
     stats.skipped++
     console.log(`[MT-events] ข้าม ${key}: ไม่มีตัวแปลงสำหรับ routing key นี้`)

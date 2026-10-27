@@ -275,6 +275,29 @@ export const config = {
       }
     },
     // -------------------------------------------------------------------
+    // ทะเบียนพนักงาน HRMS: แปลงอีเมล/รหัสพนักงานของ "ผู้แจ้ง" บนการ์ดเป็นชื่อคน (ดู services/hrDirectory.ts)
+    //   masterUrl : employee-master ทั้งก้อน (ว่าง = ปิด แสดงอีเมลตามเดิม)
+    //   empAuthUrl: ค้นรายคนด้วยรหัสพนักงาน เมื่อไม่พบในก้อนใหญ่
+    //   token / apiKey: ใส่เมื่อ HRMS บังคับ auth (Authorization: Bearer / X-Api-Key)
+    // -------------------------------------------------------------------
+    // API ของ repair service ผ่าน gateway (ไม่มี / ท้าย) ใช้อ่านสถานะล่าสุดของใบงานตอนส่งการ์ด
+    //   production ใน docker network เดียวกัน: http://maintenance-repair-service:8080   ว่าง = ใช้ <MAINTENANCE_WEB_URL>
+    repairApiUrl: stripSlash((process.env.MAINTENANCE_REPAIR_API_URL ?? process.env.MAINTENANCE_WEB_URL ?? '').trim()),
+    // API ของ fuel service ผ่าน gateway (ไม่มี / ท้าย) ใช้อ่านรายงานการใช้น้ำมันของรถตอนส่งการ์ดเบิกน้ำมัน
+    //   production ใน docker network เดียวกัน: http://maintenance-fuel-service:8080   ว่าง = ใช้ <MAINTENANCE_WEB_URL>
+    fuelApiUrl: stripSlash((process.env.MAINTENANCE_FUEL_API_URL ?? process.env.MAINTENANCE_WEB_URL ?? '').trim()),
+    hr: {
+      masterUrl: (process.env.MAINTENANCE_HR_MASTER_URL ?? 'https://qtecintegra.com/integra/api/employee-master?all=1').trim(),
+      empAuthUrl: stripSlash((process.env.MAINTENANCE_HR_EMP_AUTH_URL ?? 'https://qtecintegra.com/api/emp/auth').trim()),
+      token: (process.env.MAINTENANCE_HR_TOKEN ?? '').trim(),
+      apiKey: (process.env.MAINTENANCE_HR_API_KEY ?? '').trim(),
+      ttlMinutes: Math.max(1, Number(process.env.MAINTENANCE_HR_TTL_MINUTES ?? 15)),
+      timeoutMs: Number(process.env.MAINTENANCE_HR_TIMEOUT_MS ?? 20000),
+      get enabled(): boolean {
+        return this.masterUrl !== '' || this.empAuthUrl !== ''
+      }
+    },
+    // -------------------------------------------------------------------
     // กลุ่มปลายทางของการ์ดแจ้งเตือน MT (notify_line_group จากแชท + event จาก RabbitMQ)
     //   alertGroupIds : MT_ALERT_GROUP_IDS ระบุ groupId ตรง ๆ (ไม่ผูกกับ MT_REPORT_GROUP_IDS ซึ่งเป็นปลายทางทดสอบของรายงานเท่านั้น)
     //   groupKeywords : เมื่อไม่ได้ระบุ id ให้เลือกเฉพาะกลุ่มที่ชื่อมีคำเหล่านี้ (ค่าเริ่มต้น MT / ซ่อมบำรุง / maintenance)
