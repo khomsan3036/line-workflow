@@ -412,6 +412,47 @@ export interface GroupAlert {
   custom?: unknown
   /** ข้อความสำรองที่เขียนเองคู่กับ custom (ว่าง = ใช้ alertToText ปกติ) */
   customText?: string
+  /**
+   * รูปประกอบ (https) เช่น รูปก่อนซ่อมที่ผู้แจ้งถ่ายไว้ — รูปแรกเป็น hero ของการ์ด ที่เหลือเป็น thumbnail
+   * แต่ละรูปแตะแล้วเปิดดูเต็มจอ (ซูมได้) ผ่าน openUri ถ้ามี ไม่มีก็เปิด url รูปนั้นเอง
+   * ข้อจำกัดของ LINE: รูปใน Flex ต้อง ≤ 1024×1024 px และ ≤ 1 MB — ใช้ URL ที่ย่อแล้วเสมอ
+   */
+  images: AlertImage[]
+}
+
+export interface AlertImage {
+  /** URL รูปที่ย่อแล้ว (แสดงในการ์ด) */
+  url: string
+  /** URL ที่เปิดเมื่อแตะ (รูปเต็ม) ว่าง = url เดิม */
+  openUri?: string
+  /** คำอธิบายสั้น ๆ เช่น ชื่อไฟล์ (ใช้ใน altText) */
+  label?: string
+}
+
+/** จำนวนรูปสูงสุดบนการ์ด (hero 1 + thumbnail) */
+export const MAX_ALERT_IMAGES = 4
+
+/** https เท่านั้น และยาวไม่เกินที่ LINE รับ */
+function cleanUri(value: unknown, max = 1000): string {
+  const uri = typeof value === 'string' ? value.trim() : ''
+  return /^https:\/\/\S+$/.test(uri) && uri.length <= max ? uri : ''
+}
+
+export function cleanImages(value: unknown): AlertImage[] {
+  if (!Array.isArray(value)) return []
+  const out: AlertImage[] = []
+  const seen = new Set<string>()
+  for (const v of value) {
+    const raw = typeof v === 'string' ? { url: v } : v && typeof v === 'object' ? (v as Record<string, unknown>) : null
+    if (!raw) continue
+    const url = cleanUri(raw.url, 2000)
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    const openUri = cleanUri(raw.openUri)
+    out.push({ url, openUri: openUri || undefined, label: clean(raw.label, 60) || undefined })
+    if (out.length >= MAX_ALERT_IMAGES) break
+  }
+  return out
 }
 
 const SEVERITY_META: Record<AlertSeverity, { color: string; label: string; icon: string }> = {
@@ -455,7 +496,8 @@ export function normalizeAlert(raw: Record<string, unknown>, requestedBy: string
     details,
     actions,
     reference: clean(raw.reference, 60) || undefined,
-    requestedBy: clean(requestedBy, 60, 'ไม่ทราบชื่อ')
+    requestedBy: clean(requestedBy, 60, 'ไม่ทราบชื่อ'),
+    images: cleanImages(raw.images)
   }
 }
 
@@ -468,6 +510,7 @@ export function alertToText(alert: GroupAlert): string {
     ...alert.details.map((d) => `${d.label}: ${d.value}`),
     ...alert.items.map((i) => `- ${i}`)
   ]
+  if (alert.images.length > 0) lines.push(`📷 รูปประกอบ ${alert.images.length} รูป (แตะการ์ดเพื่อดู)`)
   if (alert.reference) lines.push(`อ้างอิง: ${alert.reference}`)
   lines.push(`แจ้งโดย ${alert.requestedBy}`)
   return lines.join('\n')
@@ -486,11 +529,57 @@ function detailRow(d: AlertDetail) {
   }
 }
 
+/** แตะรูปแล้วเปิดดูเต็มจอใน LINE (in-app browser ซูมได้) */
+function imageAction(img: AlertImage, label: string) {
+  return { type: 'uri', label, uri: img.openUri ?? img.url }
+}
+
+/** รูปแรกเต็มความกว้างการ์ด (hero) */
+function heroImage(img: AlertImage) {
+  return {
+    type: 'image',
+    url: img.url,
+    size: 'full',
+    aspectRatio: '20:13',
+    aspectMode: 'cover',
+    action: imageAction(img, 'ดูรูป')
+  }
+}
+
+/** แถว thumbnail ของรูปที่เหลือ (สูงสุด 3) แตะแต่ละรูปเปิดดูได้ */
+function thumbnailRow(images: AlertImage[]) {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'sm',
+    contents: images.map((img) => ({
+      type: 'image',
+      url: img.url,
+      size: 'full',
+      aspectRatio: '4:3',
+      aspectMode: 'cover',
+      flex: 1,
+      action: imageAction(img, 'ดูรูป')
+    }))
+  }
+}
+
 export function buildAlertCard(alert: GroupAlert): unknown {
   // การ์ดเฉพาะทางของ event ชนิดนั้น (เช่น เอกสารหมดอายุ) ชนะการ์ดกลาง
   if (alert.custom) return alert.custom
   const meta = SEVERITY_META[alert.severity]
+  const [hero, ...thumbs] = alert.images
   const body: unknown[] = [{ type: 'text', text: alert.message, size: 'sm', color: INK, wrap: true }]
+  if (thumbs.length > 0) body.push(thumbnailRow(thumbs))
+  if (alert.images.length > 0) {
+    body.push({
+      type: 'text',
+      text: `📷 รูปประกอบ ${alert.images.length} รูป · แตะรูปเพื่อดูเต็มจอ`,
+      size: 'xs',
+      color: MUTED,
+      wrap: true
+    })
+  }
   if (alert.details.length > 0) {
     body.push({
       type: 'box',
@@ -546,6 +635,7 @@ export function buildAlertCard(alert: GroupAlert): unknown {
         { type: 'text', text: alert.title, size: 'lg', weight: 'bold', color: WHITE, wrap: true }
       ]
     },
+    ...(hero ? { hero: heroImage(hero) } : {}),
     body: { type: 'box', layout: 'vertical', paddingAll: '16px', spacing: 'md', contents: body },
     footer: {
       type: 'box',

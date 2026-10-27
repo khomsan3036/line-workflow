@@ -2,7 +2,7 @@ import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqp
 import { config } from '../config'
 import { closeAbandonedConnection, describeAmqpError, warnIfLocalhostBrokerInContainer } from './amqpUtil'
 import { query, queryOne } from '../db'
-import { normalizeAlert, type AlertSeverity, type GroupAlert } from './maintenanceFlex'
+import { MAX_ALERT_IMAGES, normalizeAlert, type AlertImage, type AlertSeverity, type GroupAlert } from './maintenanceFlex'
 import { buildExpiryDigestCard, expiryDigestToText, parseExpiryDigest } from './documentExpiryFlex'
 import { pushAlertToGroups } from './maintenanceLocalTools'
 
@@ -18,6 +18,8 @@ import { pushAlertToGroups } from './maintenanceLocalTools'
 //   fuel.requested              FuelRequestedEvent          (ขอเบิกน้ำมัน)
 //   vehicle.booking.requested   VehicleBookingRequestedEvent (ขอจองรถ)
 //   maintenance.*.notification  NotificationPayload / AlertNotificationPayload จาก MCP server
+//   filestorage.file.uploaded   FileUploadedEvent (รูป/ไฟล์ที่อัปโหลดเข้า filestorage) — ไม่ได้ทำการ์ดเอง
+//                               ใช้เติมรูปก่อนซ่อมให้การ์ด repair.requested ที่พักรออยู่ (ดู pendingRepairs)
 // JSON เป็น camelCase และ enum เป็นตัวเลข (System.Text.Json แบบ Web) จึงต้องรับได้ทั้งเลขและชื่อ
 // ---------------------------------------------------------------------------
 
@@ -199,27 +201,123 @@ function shortId(v: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// รูปก่อนซ่อมบนการ์ดแจ้งซ่อมใหม่
+//
+// ระบบซ่อมบำรุงส่ง repair.requested ทันทีที่สร้างใบงาน แต่รูปที่ผู้แจ้งถ่ายไว้ถูกอัปโหลดเข้า filestorage
+// "หลัง" จากนั้น (ต้องมี id ใบงานก่อน) และ filestorage ส่ง filestorage.file.uploaded ทีละไฟล์ โดย
+// referenceId = id ใบงาน การ์ดจึงถูกพักไว้ใน pendingRepairs รอรูปจนกว่า
+//   - ไม่มีรูปใหม่มาอีกภายใน quietMs หลังรูปล่าสุด (ส่งได้เลย ไม่ต้องรอจนครบ) หรือ
+//   - ครบ waitMs นับจากแจ้งซ่อม (ส่งเลยแม้ไม่มีรูป — ใบงานที่ไม่มีรูปก็ต้องแจ้ง)
+// ตอนนี้ใบงานใหม่มีได้แต่รูป "ก่อนซ่อม" (รูปหลังซ่อมมาตอนปิดงาน) ทุกรูปในช่วงรอจึงเป็นรูปก่อนซ่อม
+// รูปในการ์ดใช้ <filesUrl>/{id}/preview ที่ filestorage ย่อให้ ≤1024px (ข้อจำกัดของ LINE Flex) และ
+// แตะแล้วเปิด preview?w=2048 เพื่อดูชัด ๆ   พักไว้ในหน่วยความจำ: ถ้า process ตายระหว่างรอ การ์ดจะหาย
+// แต่ message ยังไม่ถูก ack (handleMessage รอจนส่งเสร็จ) broker จึงส่งซ้ำให้ตอนต่อใหม่
+// ---------------------------------------------------------------------------
+
+interface PendingRepair {
+  images: AlertImage[]
+  /** ปลุก handleMessage ของ repair.requested ให้ส่งการ์ด */
+  release: () => void
+  quietTimer: NodeJS.Timeout | null
+}
+
+const pendingRepairs = new Map<string, PendingRepair>()
+
+/** URL รูปสำหรับการ์ด (ย่อแล้ว) และสำหรับแตะเปิดดู */
+function photoUrls(fileId: string): { url: string; openUri: string } | null {
+  const base = config.maintenance.events.repairPhotos.filesUrl
+  if (!base) return null
+  return { url: `${base}/${fileId}/preview`, openUri: `${base}/${fileId}/preview?w=2048` }
+}
+
+/** ค่าใน snapshot After ของ FileUploadedEvent (คีย์เป็น PascalCase ตามชื่อ property ของ .NET หรือ camelCase) */
+function snapshotValue(after: unknown, key: string): string {
+  if (!after || typeof after !== 'object') return ''
+  const o = after as Record<string, unknown>
+  return str(o[key] ?? o[key.charAt(0).toLowerCase() + key.slice(1)])
+}
+
+/** เป็นไฟล์รูปไหม — ดู ContentType ก่อน ไม่มีก็ดูนามสกุล */
+function isImageUpload(e: Json): boolean {
+  const type = snapshotValue(e.after, 'ContentType').toLowerCase()
+  if (type) return type.startsWith('image/')
+  return /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(str(e.fileName))
+}
+
+/**
+ * รูปที่อัปโหลดเข้าใบงานที่กำลังรออยู่: เก็บแล้วเลื่อนเวลาส่ง (quiet period)
+ * ใบงานที่ไม่ได้รออยู่ (รูปหลังซ่อม, ไฟล์ของระบบอื่น) ข้ามเงียบ ๆ
+ */
+function attachUploadedPhoto(e: Json): 'attached' | 'ignored' {
+  const repairId = str(e.referenceId).toLowerCase()
+  const fileId = str(e.fileId)
+  const pending = repairId ? pendingRepairs.get(repairId) : undefined
+  if (!pending || !fileId || !isImageUpload(e)) return 'ignored'
+  const urls = photoUrls(fileId)
+  if (!urls) return 'ignored'
+  if (pending.images.some((img) => img.url === urls.url)) return 'ignored'
+  pending.images.push({ ...urls, label: str(e.fileName) || undefined })
+  if (pending.quietTimer) clearTimeout(pending.quietTimer)
+  // ครบจำนวนที่การ์ดแสดงได้แล้วไม่ต้องรอต่อ
+  if (pending.images.length >= MAX_ALERT_IMAGES) pending.release()
+  else pending.quietTimer = setTimeout(pending.release, config.maintenance.events.repairPhotos.quietMs)
+  return 'attached'
+}
+
+/** พักการ์ดแจ้งซ่อมไว้รอรูป แล้วคืนรูปที่รวบรวมได้ (ว่างได้) */
+function waitForRepairPhotos(repairId: string): Promise<AlertImage[]> {
+  const cfg = config.maintenance.events.repairPhotos
+  if (!repairId || cfg.waitMs <= 0 || !cfg.filesUrl) return Promise.resolve([])
+  const key = repairId.toLowerCase()
+  const existing = pendingRepairs.get(key)
+  if (existing) existing.release() // event เดิมซ้ำ: ปล่อยตัวเก่าให้ไปก่อน (dedupe ตอนส่งจะกันซ้ำให้)
+  return new Promise((resolve) => {
+    const entry: PendingRepair = { images: [], release: () => {}, quietTimer: null }
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      clearTimeout(maxTimer)
+      if (entry.quietTimer) clearTimeout(entry.quietTimer)
+      if (pendingRepairs.get(key) === entry) pendingRepairs.delete(key)
+      resolve(entry.images)
+    }
+    entry.release = finish
+    const maxTimer = setTimeout(finish, cfg.waitMs)
+    pendingRepairs.set(key, entry)
+  })
+}
+
+// ---------------------------------------------------------------------------
 // แปลง event แต่ละชนิดเป็นการ์ดแจ้งเตือน
 // ---------------------------------------------------------------------------
 
-function fromRepairRequested(e: Json): GroupAlert {
+function fromRepairRequested(e: Json, images: AlertImage[] = []): GroupAlert {
   const severity = enumName(e.severity, REPAIR_SEVERITY)
   const tone: AlertSeverity = severity === 'Emergency' ? 'urgent' : severity === 'High' ? 'warning' : 'info'
   const severityThai = severity === 'Emergency' ? 'ฉุกเฉิน' : severity === 'High' ? 'สูง' : 'ปกติ'
   const asset = str(e.assetCode)
+  // event รุ่นใหม่มีเลขที่ใบงาน (REP-yyyyMM-####) และสถานที่; รุ่นเก่ามีแต่ id
+  const reportedNo = str(e.reportedNo)
+  const location = enumName(e.location, ['Workshop', 'Site'])
+  const locationThai = location === 'Site' ? 'หน้างาน' : location === 'Workshop' ? 'โรงงาน' : ''
+  const repairId = str(e.repairRequestId)
   return normalizeAlert(
     {
-      title: `แจ้งซ่อมใหม่${asset ? ` ${asset}` : ''}`,
+      title: `แจ้งซ่อมใหม่ ${reportedNo || asset || shortId(repairId)}`,
       message: str(e.symptom) || 'ไม่ได้ระบุอาการ',
       severity: tone,
       details: details([
         ['ความรุนแรง', severityThai],
         ['ทรัพย์สิน', asset],
+        ['สถานที่', locationThai],
         ['ผู้แจ้ง', str(e.by)],
-        ['งานเลขที่', shortId(e.repairRequestId)]
+        ['งานเลขที่', reportedNo || shortId(repairId)]
       ]),
-      actions: webAction('เปิดงานซ่อม', '/services/maintenance-request'),
-      reference: asset || shortId(e.repairRequestId)
+      // ลิงก์ตรงไปหน้าสถานะของใบงานนี้ (หน้าเดียวกับที่อีเมลแจ้งเตือนพาไป)
+      actions: webAction('เปิดงานซ่อม', repairId ? `/services/maintenance-request/status?id=${encodeURIComponent(repairId)}` : '/services/maintenance-request'),
+      reference: reportedNo || asset || shortId(repairId),
+      images
     },
     str(e.by) || 'ระบบซ่อมบำรุง'
   )
@@ -347,8 +445,8 @@ function fromNotificationPayload(e: Json): GroupAlert {
   )
 }
 
-export function mapEventToAlert(routingKey: string, e: Json): GroupAlert | null {
-  if (routingKey === 'repair.requested') return fromRepairRequested(e)
+export function mapEventToAlert(routingKey: string, e: Json, images: AlertImage[] = []): GroupAlert | null {
+  if (routingKey === 'repair.requested') return fromRepairRequested(e, images)
   if (routingKey === 'fuel.requested') return fromFuelRequested(e)
   if (routingKey === 'vehicle.booking.requested') return fromVehicleBookingRequested(e)
   if (/^maintenance\.[a-z]+\.notification$/.test(routingKey)) return fromNotificationPayload(e)
@@ -380,7 +478,21 @@ async function handleMessage(msg: ConsumeMessage): Promise<void> {
     return
   }
 
-  const alert = mapEventToAlert(key, payload)
+  // ไฟล์ที่อัปโหลด: ไม่มีการ์ดของตัวเอง แค่เติมรูปให้การ์ดแจ้งซ่อมที่รออยู่
+  if (key === 'filestorage.file.uploaded') {
+    const outcome = attachUploadedPhoto(payload)
+    if (outcome === 'attached') console.log(`[MT-events] ${key}: แนบรูป ${str(payload.fileName)} ให้ใบงาน ${shortId(payload.referenceId)}`)
+    return
+  }
+
+  // แจ้งซ่อมใหม่: พักการ์ดรอรูปก่อนซ่อมที่กำลังอัปโหลดตามมา (ดูคำอธิบายที่ pendingRepairs)
+  let images: AlertImage[] = []
+  if (key === 'repair.requested') {
+    images = await waitForRepairPhotos(str(payload.repairRequestId))
+    if (images.length > 0) console.log(`[MT-events] ${key}: ได้รูปก่อนซ่อม ${images.length} รูปสำหรับใบงาน ${shortId(payload.repairRequestId)}`)
+  }
+
+  const alert = mapEventToAlert(key, payload, images)
   if (!alert) {
     stats.skipped++
     console.log(`[MT-events] ข้าม ${key}: ไม่มีตัวแปลงสำหรับ routing key นี้`)
@@ -446,7 +558,8 @@ async function connect(): Promise<void> {
     await ch.assertExchange(cfg.exchange, 'topic', { durable: true })
     await ch.assertQueue(cfg.queue, { durable: true })
     for (const key of cfg.routingKeys) await ch.bindQueue(cfg.queue, cfg.exchange, key)
-    await ch.prefetch(5)
+    // การ์ดแจ้งซ่อมถูกพักรอรูปได้ถึง waitMs โดยยังไม่ ack ต้องเผื่อให้ event อื่นไหลต่อได้ระหว่างนั้น
+    await ch.prefetch(20)
 
     conn.on('close', () => {
       connection = null

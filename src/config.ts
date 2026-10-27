@@ -241,13 +241,30 @@ export const config = {
       exchange: process.env.MAINTENANCE_EXCHANGE ?? 'maintenance',
       // ชื่อ queue ของแอปนี้ (durable) ถ้ารันหลาย instance จะแบ่งกันรับ ไม่ซ้ำ
       queue: process.env.MAINTENANCE_EVENT_QUEUE ?? 'line-workflow.maintenance-alerts',
+      // filestorage.file.uploaded: รูปที่ผู้แจ้งอัปโหลดหลังสร้างใบแจ้งซ่อม (ใช้แนบรูปก่อนซ่อมบนการ์ด ดู repairPhotos)
       routingKeys: (
         process.env.MAINTENANCE_EVENT_ROUTING_KEYS ??
-        'maintenance.line.notification,repair.requested,fuel.requested,vehicle.booking.requested'
+        'maintenance.line.notification,repair.requested,fuel.requested,vehicle.booking.requested,filestorage.file.uploaded'
       )
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean),
+      // -----------------------------------------------------------------
+      // รูปก่อนซ่อมบนการ์ดแจ้งซ่อมใหม่
+      // ระบบซ่อมบำรุงส่ง repair.requested ทันทีที่สร้างใบงาน แต่เว็บ/มือถืออัปโหลดรูป "หลัง" สร้าง (ต้องมี id ก่อน)
+      // แอปนี้จึงพักการ์ดไว้สั้น ๆ รอ filestorage.file.uploaded ที่ referenceId ตรงกับใบงาน แล้วค่อยส่งพร้อมรูป
+      //   waitMs  : รอได้นานสุดนับจาก repair.requested (ครบแล้วส่งเลยแม้ยังไม่มีรูป)   0 = ปิด ส่งทันทีไม่มีรูป
+      //   quietMs : หลังรูปล่าสุดมาถึง ถ้าไม่มีรูปใหม่ภายในช่วงนี้ให้ส่งได้เลย (ไม่ต้องรอจนครบ waitMs)
+      //   filesUrl: ฐาน URL สาธารณะของ filestorage (ไม่มี / ท้าย) รูปในการ์ดใช้ <filesUrl>/{id}/preview (≤1024px ตามข้อจำกัด LINE)
+      //             และแตะเปิด <filesUrl>/{id}/preview?w=2048   ว่าง = ไม่แนบรูป
+      // -----------------------------------------------------------------
+      repairPhotos: {
+        waitMs: Math.max(0, Number(process.env.MAINTENANCE_REPAIR_PHOTO_WAIT_SECONDS ?? 45)) * 1000,
+        quietMs: Math.max(1, Number(process.env.MAINTENANCE_REPAIR_PHOTO_QUIET_SECONDS ?? 8)) * 1000,
+        filesUrl: stripSlash(
+          (process.env.MAINTENANCE_FILES_URL ?? (process.env.MAINTENANCE_WEB_URL ? `${stripSlash(process.env.MAINTENANCE_WEB_URL.trim())}/api/files` : '')).trim()
+        )
+      },
       // กันการ์ดซ้ำตามเนื้อหา (alertId / เลขที่คำขอ) ภายในกี่ชั่วโมง จำไว้ในตาราง maintenance_alert_dedupe (0 = ปิด)
       // ทำไมต้องมี: tool Get* ของ MCP server publish alert เดิมซ้ำทุกครั้งที่มีคนถาม (ฝั่งนั้นกันซ้ำแค่ 60 นาทีในหน่วยความจำ)
       dedupeHours: Number(process.env.MAINTENANCE_EVENT_DEDUPE_HOURS ?? 24),
