@@ -345,7 +345,8 @@ async function fetchFuelUsage(vehicleCode: string): Promise<FuelUsageSummary | n
       totalLiters: n(r.totalLiters) ?? 0,
       requestCount: n(r.requestCount) ?? 0,
       diffBaht: n(r.diffBaht),
-      badge: str(r.badge).toLowerCase() || null
+      badge: str(r.badge).toLowerCase() || null,
+      dataWarningRequestNo: str(r.dataWarningRequestNo) || null
     }
   } catch {
     return null

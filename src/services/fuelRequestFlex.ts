@@ -22,8 +22,10 @@ export interface FuelUsageSummary {
   requestCount: number
   /** ผลต่างเป็นบาท (+ ประหยัด / − เกินเป้า) */
   diffBaht: number | null
-  /** green | yellow | red จาก backend */
+  /** green | yellow | red | check (เลขไมล์ผิดปกติ) จาก backend */
   badge: string | null
+  /** เลขใบเบิกที่เลขไมล์ผิดปกติ (เมื่อ badge = check) */
+  dataWarningRequestNo?: string | null
 }
 
 export interface FuelRequestCardInput {
@@ -123,6 +125,8 @@ function economyTone(badge: string | null): { label: string; bg: string; ink: st
   if (badge === 'green') return { label: 'ประหยัด ✓', bg: GREEN_SOFT, ink: GREEN_DEEP }
   if (badge === 'yellow') return { label: 'เฝ้าระวัง', bg: AMBER_SOFT, ink: AMBER_DEEP }
   if (badge === 'red') return { label: 'สิ้นเปลือง', bg: RED_SOFT, ink: RED_DEEP }
+  // backend พบเลขไมล์ที่น่าจะพิมพ์ผิด (ต่ำกว่าครั้งก่อน หรืออัตราเกินจริง) — ไม่ให้คะแนน ให้ไปตรวจแทน
+  if (badge === 'check') return { label: '⚠️ ตรวจสอบเลขไมล์', bg: AMBER_SOFT, ink: AMBER_DEEP }
   return { label: 'ยังไม่มีข้อมูล', bg: GRAY_SOFT, ink: MUTED }
 }
 
@@ -141,7 +145,7 @@ function economySection(u: FuelUsageSummary) {
   const hasRate = u.kmPerLiter !== null && u.targetKmPerLiter > 0
   const ratio = hasRate ? (u.kmPerLiter as number) / u.targetKmPerLiter : 0
   const pct = hasRate ? Math.round(ratio * 100) : null
-  const rateColor = u.badge === 'red' ? RED_DEEP : u.badge === 'yellow' ? AMBER_DEEP : u.badge === 'green' ? GREEN_DEEP : INK
+  const rateColor = u.badge === 'red' ? RED_DEEP : u.badge === 'yellow' || u.badge === 'check' ? AMBER_DEEP : u.badge === 'green' ? GREEN_DEEP : INK
 
   const contents: unknown[] = [
     {
@@ -196,6 +200,14 @@ function economySection(u: FuelUsageSummary) {
     ]
   })
   contents.push(text(`จากการเบิก ${u.requestCount.toLocaleString('th-TH')} ครั้ง · ผลต่าง + = ประหยัดกว่าเป้า, − = ใช้เกินเป้า`, { size: 'xs', color: MUTED }))
+  if (u.badge === 'check') {
+    contents.push(
+      text(
+        `⚠️ เลขไมล์ในใบ ${u.dataWarningRequestNo || 'ล่าสุด'} ต่ำกว่าครั้งก่อนหรือได้อัตราเกินจริง — ตัวเลขข้างบนคิดเฉพาะช่วงที่เชื่อถือได้ กรุณาแก้เลขไมล์ในระบบ`,
+        { size: 'xs', color: AMBER_DEEP }
+      )
+    )
+  }
 
   return {
     type: 'box',
