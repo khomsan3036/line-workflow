@@ -2,6 +2,9 @@
 #   docker compose up -d      # เปิดฐานข้อมูล
 #   docker compose down       # ปิด (ข้อมูลยังอยู่ใน volume)
 #   docker compose down -v    # ปิดและลบข้อมูลทั้งหมด
+#
+# ถ้าเครื่องมี PostgreSQL ติดตั้งอยู่แล้วและกินพอร์ต 5432 ให้ตั้ง PG_HOST_PORT=5433 ใน .env
+# แล้วใช้ DATABASE_URL=postgres://postgres:postgres@localhost:5433/linechat
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,7 +16,8 @@ services:
       POSTGRES_DB: linechat
       TZ: Asia/Bangkok
     ports:
-      - "5432:5432"
+      # พอร์ตบนเครื่อง host (เปลี่ยนได้ด้วย PG_HOST_PORT ใน .env ถ้ามี PostgreSQL ตัวอื่นใช้ 5432 อยู่แล้ว)
+      - "${PG_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
