@@ -367,6 +367,39 @@ export const config = {
     }
   },
 
+  // -------------------------------------------------------------------
+  // การ์ด "ขาดงานติดต่อกัน + ของค้างคืน Store" (qtec-integra: integra-store-mcp-service, tool store_absent_employee_backlogs)
+  //   MCP ฝั่ง store อ่านการขาดงานจาก bPlus เอง (กติกาเดียวกับ services/absence.ts) แล้วเทียบกับรายการค้างคืนของพนักงาน
+  //   ทุก tool ต้องมี bearer ของผู้ใช้ที่เปิดแอป Employee Backlogs ได้ จึงล็อกอินด้วยบัญชีบริการ STORE_MCP_USERNAME / PASSWORD
+  //   STORE_MCP_URL        = http://<host>:5336/mcp (ในเครือข่าย docker: http://integra-store-mcp-service:8080/mcp)
+  //   STORE_MCP_PROJECT    = ส่งเป็น X-Store-Project (กติกานับ "ค้าง" ตามโครงการ เหมือนหน้าจอ) ว่าง = J-401 ตามฝั่ง store
+  //   ABSENCE_STORE_CRON   = ค่าเริ่มต้น จ.-ส. 09:15 ว่าง = ปิด / ABSENCE_STORE_GROUP_IDS ว่าง = ไม่ส่ง (กลุ่ม Store / HR)
+  //   ABSENCE_STORE_TOP    = อันดับต่อสถานที่ (ค่าเริ่มต้น 10) / ABSENCE_STORE_LINES = รายการบนการ์ดรายละเอียดเมื่อกด › (อย่างน้อย 10)
+  //                        การ์ดลดจำนวนเองถ้าเกิน 45 KB (เพดาน LINE 50 KB)
+  //   ABSENCE_STORE_MODE   = ว่าง (ตามหน้าจอ) / BORROW / ISSUE / ALL
+  // -------------------------------------------------------------------
+  storeAbsence: {
+    mcpUrl: (process.env.STORE_MCP_URL || 'http://localhost:5336/mcp').trim(),
+    username: (process.env.STORE_MCP_USERNAME ?? '').trim(),
+    password: process.env.STORE_MCP_PASSWORD ?? '',
+    project: (process.env.STORE_MCP_PROJECT ?? '').trim(),
+    timeoutMs: Number(process.env.STORE_MCP_TIMEOUT_MS ?? 120000),
+    cron: (process.env.ABSENCE_STORE_CRON ?? '15 9 * * 1-6').trim(),
+    targets: list(process.env.ABSENCE_STORE_GROUP_IDS),
+    // กลุ่มที่พิมพ์ "ดูของค้างคืน <รหัส>" ถามของใครก็ได้ (ว่าง = กลุ่ม C... ใน ABSENCE_STORE_GROUP_IDS + STORE_REQUEST_LINE_TARGETS)
+    queryGroupIds: list(process.env.ABSENCE_STORE_QUERY_GROUP_IDS),
+    // LINE userId (U...) ที่ถามของค้างของใครก็ได้ในแชท 1:1 (ไม่ต้องยืนยันตัวตน) คนอื่นดูได้เฉพาะของตัวเอง
+    queryUserIds: list(process.env.ABSENCE_STORE_QUERY_USER_IDS),
+    top: Math.min(15, Math.max(1, Number(process.env.ABSENCE_STORE_TOP) || 10)),
+    linesPerPerson: Math.min(30, Math.max(1, Number(process.env.ABSENCE_STORE_LINES) || 10)),
+    mode: (process.env.ABSENCE_STORE_MODE ?? '').trim().toUpperCase(),
+    // หน้าเว็บ Store Control (ปุ่มบนการ์ดเปิด <webUrl>/store-control?view=backlog)
+    webUrl: (process.env.STORE_REQUEST_WEB_URL || 'https://qtecintegra.com/integra').trim().replace(/\/$/, ''),
+    get configured(): boolean {
+      return this.mcpUrl !== '' && this.username !== '' && this.password !== ''
+    }
+  },
+
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
     password: process.env.ADMIN_PASSWORD ?? 'admin1234',

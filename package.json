@@ -23,6 +23,7 @@
     "mt-report": "tsx scripts/mt-report.ts",
     "ot-report": "tsx scripts/ot-report.ts",
     "absence-report": "tsx scripts/absence-report.ts",
+    "absence-store-report": "tsx scripts/absence-store-report.ts",
     "late-report": "tsx scripts/late-report.ts",
     "perfect-attendance": "tsx scripts/perfect-attendance.ts",
     "cleaning-day": "tsx scripts/cleaning-day.ts",
