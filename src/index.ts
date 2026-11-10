@@ -15,6 +15,7 @@ import { attendanceAvailable, crossCheckHealth } from './services/attendance'
 import { maintenanceEventsStatus, startMaintenanceEventConsumer } from './services/maintenanceEvents'
 import { complaintEventsStatus, startComplaintEventConsumer } from './services/complaintEvents'
 import { startStoreRequestEventConsumer, storeRequestEventsStatus } from './services/storeRequestEvents'
+import { startGoodCodeEventConsumer, goodCodeEventsStatus } from './services/goodCodeEvents'
 
 // ---------------------------------------------------------------------------
 // โครงสร้าง 2 ชั้น
@@ -160,6 +161,7 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
     attendance: attendanceAvailable() ? { crossCheck: crossCheckHealth() } : 'off',
     complaint: complaintEventsStatus(),
     storeRequest: storeRequestEventsStatus(),
+    goodCode: goodCodeEventsStatus(),
     basePath: config.basePath || '/'
   })
 }
@@ -297,6 +299,8 @@ async function start(): Promise<void> {
     if (db.ok) startComplaintEventConsumer()
     // ใบขอเบิก/ขอยืมจาก qtec-integra (store.request.*) -> การ์ดเข้ากลุ่มทีมสโตร์ด้วย OA HR
     if (db.ok) startStoreRequestEventConsumer()
+    // คำขอเพิ่มรหัสสินค้าใหม่จาก qtec-integra (good-code.*) -> การ์ดถึงผู้อนุมัติ/ผู้ขอด้วย OA HR
+    if (db.ok) startGoodCodeEventConsumer()
   })
 }
 

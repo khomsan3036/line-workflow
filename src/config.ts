@@ -367,6 +367,40 @@ export const config = {
     }
   },
 
+  // -------------------------------------------------------------------
+  // คำขอเพิ่มรหัสสินค้าใหม่ (qtec-integra: Good Code Master, integra-costcode-service)
+  //   รับ good-code.request.submitted / good-code.created / good-code.request.rejected จาก exchange integra-drawing
+  //   event มีแค่รหัส+เหตุผล -> ถามรายละเอียด (ชื่อ/ประเภท/หมวด/กลุ่ม/หน่วย) จาก GOOD_CODE_API_URL (GET ไม่ต้องล็อกอิน)
+  //   การ์ด "คำขอใหม่" -> GOOD_CODE_LINE_TARGETS (ผู้อนุมัติ)  การ์ด "ผล" -> ผู้ขอ (line_employee_links) + กลุ่มเดียวกัน
+  //   broker ตัวเดียวกับใบขอเบิกสโตร์ (STORE_EVENTS_RABBITMQ_URL ว่าง = RABBITMQ_URL)   ไม่ตั้งปลายทาง = ปิด
+  // -------------------------------------------------------------------
+  goodCode: {
+    url: (process.env.GOOD_CODE_EVENTS_RABBITMQ_URL || process.env.STORE_EVENTS_RABBITMQ_URL || process.env.RABBITMQ_URL || '').trim(),
+    exchange: process.env.GOOD_CODE_EVENT_EXCHANGE || process.env.STORE_EVENT_EXCHANGE || 'integra-drawing',
+    queue: process.env.GOOD_CODE_EVENT_QUEUE || 'line-workflow.good-code',
+    targets: list(process.env.GOOD_CODE_LINE_TARGETS),
+    // submitted | approved | rejected | all
+    events: ((): string[] => {
+      const v = list((process.env.GOOD_CODE_LINE_EVENTS || 'submitted,approved,rejected').toLowerCase())
+      return v.includes('all') ? ['submitted', 'approved', 'rejected'] : v
+    })(),
+    // ส่งการ์ดผลตัดสินให้ผู้ขอทาง LINE ส่วนตัวด้วย (ต้องเคยผูกรหัสพนักงานไว้ใน line_employee_links)
+    notifyRequester: (process.env.GOOD_CODE_NOTIFY_REQUESTER ?? 'true').trim().toLowerCase() !== 'false',
+    // integra-costcode-service: dev บนเครื่องเดียวกัน http://localhost:5312  production ใน docker network http://integra-costcode-service:5312
+    apiUrl: stripSlash((process.env.GOOD_CODE_API_URL ?? '').trim()),
+    apiTimeoutMs: Number(process.env.GOOD_CODE_API_TIMEOUT_MS ?? 10000),
+    // หน้าเว็บ qtec-integra (ปุ่มบนการ์ดเปิด <webUrl>/good-code?view=requests)
+    webUrl: stripSlash((process.env.GOOD_CODE_WEB_URL || process.env.STORE_REQUEST_WEB_URL || 'https://qtecintegra.com/integra').trim()),
+    dedupeHours: Number(process.env.GOOD_CODE_DEDUPE_HOURS ?? 24),
+    get enabled(): boolean {
+      return (
+        this.url !== '' &&
+        this.targets.length > 0 &&
+        (process.env.GOOD_CODE_EVENTS_ENABLED ?? 'true').trim().toLowerCase() !== 'false'
+      )
+    }
+  },
+
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
     password: process.env.ADMIN_PASSWORD ?? 'admin1234',

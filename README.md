@@ -41,6 +41,7 @@ npm run dev
 | `npm run daily-summary -- --dry-run` | สรุปแชทประจำวัน (ไม่ส่งออก) |
 | `npm run daily-report -- --dry-run --html` | รายงานผู้บริหาร + เขียนไฟล์ HTML |
 | `npm run mt:publish-test -- repair` | จำลอง event ระบบซ่อมบำรุงลง RabbitMQ (repair / fuel / vehicle / mcp) ทดสอบแจ้งเข้าไลน์กลุ่ม |
+| `npm run good-code-card -- --to=Uxxx --good-code=0080001-0484` | ส่งการ์ดคำขอเพิ่มรหัสสินค้า (Good Code Master) ของคำขอจริงจาก integra-costcode-service ไปทดสอบ (`--json` = พิมพ์ Flex JSON, ไม่ใส่ `--good-code` = ข้อมูลตัวอย่าง) |
 
 ---
 
@@ -67,6 +68,7 @@ npm run dev
 | `MEDIA_LOCAL_DIR` | โฟลเดอร์เก็บไฟล์เมื่อใช้ดิสก์ (ค่าเริ่มต้น `storage/media`) |
 | `MEDIA_HOST_DIR` | (เฉพาะ `docker-compose.prod.yml`) โฟลเดอร์บนเครื่อง Windows ที่ bind mount เป็น `/app/storage` (ค่าเริ่มต้น `D:/QTEC/File_Storage/LineWorkflow`) |
 | `MEDIA_MAX_SIZE_MB` | ขนาดไฟล์สูงสุดที่ยอมโหลด (ค่าเริ่มต้น 25 MB) |
+| `GOOD_CODE_LINE_TARGETS` / `GOOD_CODE_API_URL` | การ์ดคำขอเพิ่มรหัสสินค้าใหม่จาก qtec-integra (event `good-code.*` บน exchange `integra-drawing`) ส่งถึงผู้อนุมัติ และส่งผลตัดสินถึงผู้ขอ รายละเอียดสินค้าถามจาก integra-costcode-service (`http://localhost:5312` ตอน dev) ปุ่มอนุมัติ/ไม่อนุมัติ/ดูรายละเอียดเปิด `GOOD_CODE_WEB_URL` + `/good-code?view=requests&request=<id>&action=approve|reject` ซึ่งหน้า qtec-integra จะเปิดกล่องตัดสินของคำขอนั้นให้เลย (ตอน dev ตั้ง `http://localhost:3000` เปิดได้จาก LINE บนเครื่องเดียวกัน) |
 
 ---
 
