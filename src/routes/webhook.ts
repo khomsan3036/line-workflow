@@ -21,6 +21,7 @@ import { handleUnsend } from '../services/unsend'
 import { FALLBACK_TEXT, SHORTCUT_QUICK_REPLY, WELCOME_TEXT, replyForPostback, replyForText } from '../services/autoReply'
 import { MAINTENANCE_HINT_LINE, buildTopicHelp, resolveTopic, topicQuickReply } from '../services/topicRouter'
 import { handleCrossCheckListPostback } from '../services/crossCheckListHandler'
+import { handleAbsenceStorePostback, handleBacklogQuestion } from '../services/absenceStoreHandler'
 import { handleComplaintPostback, handleComplaintTrackMessage } from '../services/complaintChat'
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,17 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
     ) {
       return
     }
+    // ปุ่ม › บนการ์ด "ขาดงานแต่ยังมีของค้างคืน" (asb=<รหัส>...) -> การ์ดของค้างของคนนั้นจากระบบ Store
+    if (
+      await handleAbsenceStorePostback({
+        data: event.postback.data,
+        replyToken: event.replyToken,
+        targetType: event.source.type === 'group' ? 'group' : 'user',
+        targetId: event.source.type === 'group' ? event.source.groupId : event.source.userId
+      })
+    ) {
+      return
+    }
     const reply = replyForPostback(event.postback.data)
     // ใช้ OA ร่วมกัน: ปุ่มของฝั่งซ่อมบำรุง (data=q=<คำถาม>) ให้แชทบอทซ่อมบำรุงตอบ
     const question = reply === null && maintenanceInHrChat() ? maintenanceQuestionFromPostback(event.postback.data) : null
@@ -274,6 +286,12 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
       if (await handleComplaintTrackMessage({ text, replyToken: event.replyToken, userId })) {
         await saveDirectMessage({ lineMessageId: event.message.id, userId, displayName: await getUserProfileName(userId), messageType: 'text', messageText: text, replyText: '(ติดตามเรื่องร้องเรียน)', replyMatched: true, sentAt: new Date(event.timestamp) }).catch(() => {})
         console.log(`[แชท 1:1] "${text.slice(0, 30)}" -> ผูกติดตามเรื่องร้องเรียน`)
+        return
+      }
+      // "ดูของค้างคืน 69-2-073" (แชท 1:1 ดูได้เฉพาะของตัวเอง) -> การ์ดของค้างจากระบบ Store
+      if (await handleBacklogQuestion({ text, replyToken: event.replyToken, targetType: 'user', targetId: userId, userId })) {
+        await saveDirectMessage({ lineMessageId: event.message.id, userId, displayName: await getUserProfileName(userId), messageType: 'text', messageText: text, replyText: '(ของค้างคืน Store)', replyMatched: true, sentAt: new Date(event.timestamp) }).catch(() => {})
+        console.log(`[แชท 1:1] "${text.slice(0, 30)}" -> ของค้างคืน Store`)
         return
       }
       // OT ก่อน "เวลาเข้างานของฉัน" เพราะ "OT ของฉัน" มีคำว่า "ของฉัน" ซึ่ง handleMyAttendance ก็รับด้วย
@@ -353,6 +371,13 @@ export async function handleEvent(event: WebhookEvent): Promise<void> {
 
   // ในกลุ่มก็ถามสรุปเข้างาน / Top OT ได้ (ตอบเฉพาะเมื่อข้อความเป็นคำถามเรื่องนี้ ไม่รบกวนแชทปกติ)
   if (messageText !== null) {
+    // "ดูของค้างคืน 69-2-073" ในกลุ่ม Store (ไม่ต้อง @บอท) กลุ่มอื่นเงียบ
+    if (
+      await handleBacklogQuestion({ text: messageText, replyToken: event.replyToken, targetType: 'group', targetId: groupId, userId: event.source.userId })
+    ) {
+      console.log(`[กลุ่ม] "${messageText}" -> ของค้างคืน Store`)
+      return
+    }
     const overtime = await handleOvertimeQuestion({
       text: messageText,
       replyToken: event.replyToken,
@@ -409,6 +434,12 @@ async function answerAddressedGroupMessage(params: {
   const { replyToken, userId, groupId, addressed } = params
   const { topic, text: question } = resolveTopic(addressed)
   const shown = `@${addressed.alias ?? 'บอท'} ${question}`.trim()
+
+  // "@บอท ดูของค้างคืน 69-2-073" (กลุ่มที่ไม่ใช่กลุ่ม Store ได้คำตอบปฏิเสธสั้น ๆ)
+  if (await handleBacklogQuestion({ text: question, replyToken, targetType: 'group', targetId: groupId, userId, addressed: true })) {
+    console.log(`[กลุ่ม] "${shown}" -> ของค้างคืน Store`)
+    return
+  }
 
   if (topic === 'maintenance') {
     console.log(`[กลุ่ม] "${shown}" -> ส่งให้แชทบอทซ่อมบำรุง`)

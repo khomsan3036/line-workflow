@@ -6,6 +6,7 @@ import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKin
 import { runOvertimeReport } from './jobs/overtimeReport'
 import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
 import { runAbsenceReport } from './jobs/absenceReport'
+import { runAbsenceStoreReport } from './jobs/absenceStoreReport'
 import { runLatenessReport } from './jobs/latenessReport'
 import { runPerfectAttendanceReport } from './jobs/perfectAttendanceReport'
 import { runComplaintDigest } from './services/complaintChat'
@@ -134,6 +135,27 @@ export function startScheduler(): void {
       { timezone: tz }
     )
     console.log(`[scheduler] ตั้งงานขาดงานติดต่อกันไว้ที่ "${absenceCron}" (${tz}) -> ${config.scheduler.absenceReportTargets.length} ปลายทาง`)
+  }
+
+  // การ์ด "ขาดงานแต่ยังมีของค้างคืน" จาก integra-store-mcp-service (ค่าเริ่มต้น จ.-ส. 09:15) ว่าง / ไม่มีปลายทาง / ไม่มีบัญชี = ปิด
+  const absenceStoreCron = config.storeAbsence.cron
+  if (absenceStoreCron && !cron.validate(absenceStoreCron)) {
+    console.error(`[scheduler] รูปแบบ ABSENCE_STORE_CRON ไม่ถูกต้อง: ${absenceStoreCron}`)
+  } else if (absenceStoreCron && config.storeAbsence.targets.length > 0 && config.storeAbsence.configured) {
+    cron.schedule(
+      absenceStoreCron,
+      async () => {
+        console.log(`[scheduler] เริ่มงานขาดงาน + ของค้างคืน ${new Date().toLocaleString('th-TH', { timeZone: tz })}`)
+        try {
+          const outcome = await runAbsenceStoreReport({ sentBy: 'scheduler:absence-store', dedupe: true })
+          for (const t of outcome.targets) console.log(`[scheduler]   ขาดงาน+ของค้าง -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+        } catch (err) {
+          console.error('[scheduler] งานขาดงาน + ของค้างคืนผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานขาดงาน + ของค้างคืนไว้ที่ "${absenceStoreCron}" (${tz}) -> ${config.storeAbsence.targets.length} ปลายทาง`)
   }
 
   // การ์ด "มาสายติดต่อกัน" (ค่าเริ่มต้น จ.-ส. 09:05 ตรวจถึงเมื่อวาน) ว่าง / ไม่มีปลายทาง = ปิด
