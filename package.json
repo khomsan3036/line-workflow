@@ -21,6 +21,7 @@
     "daily-report": "tsx scripts/daily-report.ts",
     "attendance-report": "tsx scripts/attendance-report.ts",
     "mt-report": "tsx scripts/mt-report.ts",
+    "pm-alert": "tsx scripts/pm-alert.ts",
     "ot-report": "tsx scripts/ot-report.ts",
     "absence-report": "tsx scripts/absence-report.ts",
     "absence-store-report": "tsx scripts/absence-store-report.ts",
