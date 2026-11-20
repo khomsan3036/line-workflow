@@ -11,6 +11,7 @@ import { runLatenessReport } from './jobs/latenessReport'
 import { runPerfectAttendanceReport } from './jobs/perfectAttendanceReport'
 import { runComplaintDigest } from './services/complaintChat'
 import { printDocumentExpiryRun, runDocumentExpiryDispatch } from './services/documentExpiryDispatch'
+import { runPmScheduleDispatch } from './services/pmScheduleDispatch'
 
 // ---------------------------------------------------------------------------
 // ตัวตั้งเวลาในตัวโปรแกรม (in-process scheduler)
@@ -315,6 +316,29 @@ export function startScheduler(): void {
   } else if (docExpiryCron && !config.maintenance.apiUrl) {
     // ตั้งเวลาไว้แต่ไม่รู้จะเรียกใคร: บอกให้ชัด ดีกว่าเงียบแล้วไม่มีการ์ดมาทุกเช้า
     console.warn('[scheduler] ข้ามงานแจ้งเตือนเอกสารใกล้หมดอายุ: ยังไม่ได้ตั้ง MAINTENANCE_API_URL')
+  }
+
+  // แจ้งเตือนแผน PM เกินกำหนด/ใกล้ถึงรอบทุกเช้า: สั่ง maintenance-pm-service ให้ dispatch
+  // (มัน publish เข้า maintenance.line.notification -> consumer ของแอปนี้ทำการ์ด pmScheduleFlex ส่งเข้ากลุ่ม)
+  const pmCron = config.scheduler.pmScheduleCron
+  if (pmCron && config.maintenance.pmApiUrl) {
+    if (!cron.validate(pmCron)) {
+      console.error(`[scheduler] รูปแบบ MT_PM_CRON ไม่ถูกต้อง: ${pmCron}`)
+    } else {
+      cron.schedule(
+        pmCron,
+        async () => {
+          // runPmScheduleDispatch ไม่ throw: ตัวตั้งเวลาต้องไม่ล้มเพราะปลายทางตอบไม่ได้
+          const summary = await runPmScheduleDispatch('cron')
+          if (summary.ok) console.log(`[scheduler] แผน PM: ${summary.text}`)
+          else console.error(`[scheduler] แผน PM: ${summary.text}`)
+        },
+        { timezone: tz }
+      )
+      console.log(`[scheduler] ตั้งงานแจ้งเตือนแผน PM ไว้ที่ "${pmCron}" (${tz}) -> ${config.maintenance.pmApiUrl}`)
+    }
+  } else if (pmCron && !config.maintenance.pmApiUrl) {
+    console.warn('[scheduler] ข้ามงานแจ้งเตือนแผน PM: ยังไม่ได้ตั้ง MAINTENANCE_PM_API_URL')
   }
 
   // ระบบรับเรื่องร้องเรียน: การ์ดสรุปเรื่องค้าง -> COMPLAINT_DIGEST_GROUP_IDS (ว่าง = ปิด)

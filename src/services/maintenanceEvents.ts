@@ -7,6 +7,7 @@ import { buildExpiryDigestCard, expiryDigestToText, parseExpiryDigest } from './
 import { pushAlertToGroups } from './maintenanceLocalTools'
 import { resolvePersonName } from './hrDirectory'
 import { buildFuelRequestCard, fuelRequestCardToText, type FuelUsageSummary } from './fuelRequestFlex'
+import { buildPmDigestCard, parsePmDigest, pmDigestToText } from './pmScheduleFlex'
 
 // ---------------------------------------------------------------------------
 // Consumer ของ RabbitMQ: รับ event จากระบบซ่อมบำรุง (exchange "maintenance") แล้วแจ้งเข้าไลน์กลุ่มของทีม
@@ -541,6 +542,22 @@ function fromNotificationPayload(e: Json): GroupAlert {
       str(e.requestedBy) || 'ระบบเอกสารและวันหมดอายุ'
     )
     return { ...base, custom: buildExpiryDigestCard(digest), customText: expiryDigestToText(digest) }
+  }
+
+  // แผน PM เกินกำหนด/ใกล้ถึงรอบ (pm-service) มีการ์ดของตัวเองเช่นกัน
+  const pm = parsePmDigest(e, config.maintenance.webUrl)
+  if (pm) {
+    const base = normalizeAlert(
+      {
+        title: str(e.title) || 'แผน PM เกินกำหนด / ใกล้ถึงรอบ',
+        message: str(e.message) || '-',
+        severity,
+        items: Array.isArray(e.items) ? e.items : [],
+        reference: undefined
+      },
+      str(e.requestedBy) || 'ระบบแผน PM'
+    )
+    return { ...base, custom: buildPmDigestCard(pm), customText: pmDigestToText(pm) }
   }
 
   return normalizeAlert(

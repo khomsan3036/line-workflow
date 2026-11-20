@@ -208,6 +208,11 @@ export const config = {
     apiUrl: stripSlash((process.env.MAINTENANCE_API_URL ?? '').trim()),
     // เวลาที่ยอมรอ asset service ตอนสั่ง dispatch (มันต้องอ่านเอกสารทั้งทะเบียน + ส่งอีเมล)
     docExpiryTimeoutMs: Number(process.env.MAINTENANCE_DOC_EXPIRY_TIMEOUT_MS ?? 120000),
+    // API ของ maintenance-pm-service (ไม่มี / ท้าย) ใช้สั่ง dispatch แจ้งเตือนแผน PM เกินกำหนด/ใกล้ถึงรอบ
+    //   dev: http://localhost:5128   production (docker network เดียวกัน): http://maintenance-pm-service:8080
+    // ว่าง = ปิดงานตั้งเวลาแจ้งเตือนแผน PM
+    pmApiUrl: stripSlash((process.env.MAINTENANCE_PM_API_URL ?? '').trim()),
+    pmTimeoutMs: Number(process.env.MAINTENANCE_PM_TIMEOUT_MS ?? 60000),
     // จำกัดชื่อ tool ที่ให้บอทเรียกได้ (คั่นด้วยจุลภาค, รองรับ * เช่น Get*) ค่าว่างหรือ * = ทุก tool
     mcpTools: (process.env.MAINTENANCE_MCP_TOOLS ?? '*')
       .split(',')
@@ -492,6 +497,9 @@ export const config = {
     // แจ้งเตือนเอกสารใกล้หมดอายุ (ป้ายภาษี/พ.ร.บ., ประกันภัย, ปจ., สติ๊กเกอร์, ใบขับขี่)
     // ค่าเริ่มต้น 09:30 ทุกวัน — เช้าพอให้ทำเรื่องต่ออายุทันในวันเดียวกัน ว่าง = ปิดงานนี้
     docExpiryCron: (process.env.MT_DOC_EXPIRY_CRON ?? '30 9 * * *').trim(),
+    // แจ้งเตือนแผน PM เกินกำหนด/ใกล้ถึงรอบ (จำนวนวัน/กม./ชม. ล่วงหน้าตั้งในหน้าเว็บ "แผน PM" > ตั้งค่าแจ้งเตือน)
+    // ค่าเริ่มต้น 08:45 ทุกวัน — ก่อนประชุมงานเช้า ว่าง = ปิดงานนี้
+    pmScheduleCron: (process.env.MT_PM_CRON ?? '45 8 * * *').trim(),
     // REPORT_CRON ส่งการ์ด "สรุปการเข้างาน" (จำนวนพนักงานสแกนเข้างาน) ไม่ใช่รายงานยอดขายจำลองของหลักสูตรอีกต่อไป
     reportCron: process.env.REPORT_CRON ?? '0 8 * * *',
     // หลายรอบต่อวันที่นาทีไม่เท่ากัน (เช่น 10:30 และ 20:00) เขียนเป็น cron เดียวไม่ได้ จึงคั่นหลาย cron ด้วย ;
