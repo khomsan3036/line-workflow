@@ -311,6 +311,10 @@ export const config = {
     // -------------------------------------------------------------------
     alertGroupIds: list(process.env.MT_ALERT_GROUP_IDS),
     groupKeywords: list(process.env.MT_GROUP_KEYWORDS ?? 'MT,ซ่อมบำรุง,maintenance'),
+    // token ของ API ภายใน GET /internal/mt-groups (ทะเบียนกลุ่มที่บอทอยู่ ให้หน้า "การแจ้งเตือน LINE" ของเว็บซ่อมบำรุง
+    // ทำตัวเลือกกลุ่มปลายทาง) fuel-service เรียกพร้อม header X-Service-Token ค่านี้ต้องเท่ากับ LineWorkflow:ServiceToken ฝั่งนั้น
+    // ว่าง = ปิด endpoint (ตอบ 404) หน้าเว็บจะให้พิมพ์ group id เองแทน
+    internalApiToken: (process.env.INTERNAL_API_TOKEN ?? '').trim(),
     get enabled(): boolean {
       return this.sharedOa || this.channelSecret !== '' || this.channelAccessToken !== ''
     }

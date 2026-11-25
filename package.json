@@ -29,6 +29,7 @@
     "perfect-attendance": "tsx scripts/perfect-attendance.ts",
     "cleaning-day": "tsx scripts/cleaning-day.ts",
     "store-request-card": "tsx scripts/store-request-card.ts",
+    "fuel-digest-card": "tsx scripts/fuel-digest-card.ts",
     "good-code-card": "tsx scripts/good-code-card.ts",
     "seed:media": "tsx scripts/seed-media.ts",
     "media:cleanup": "tsx scripts/media-cleanup.ts",
