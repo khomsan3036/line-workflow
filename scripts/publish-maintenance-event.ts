@@ -42,6 +42,26 @@ const samples: Record<string, [string, Record<string, unknown>]> = {
       startAt: '2026-09-08T08:30:00', endAt: '2026-09-08T17:00:00', by: 'tester'
     }
   ],
+  // สรุปขอเติมน้ำมันตามรอบ (รูปแบบเดียวกับที่ maintenance-fuel-service ส่งตามเวลาที่ตั้งในหน้าเว็บ)
+  fuelDigest: [
+    'maintenance.line.notification',
+    {
+      id: randomUUID().replace(/-/g, ''), alertId: `fuel-digest-test-${randomUUID()}`, type: 'alert', severity: 'warning',
+      service: 'fuel', category: 'fuel_request_digest', title: '[ทดสอบ] สรุปขอเติมน้ำมัน รอบ 10:00 น.',
+      message: 'ช่วง 18:00–10:00 มีคำขอเติมน้ำมันใหม่ 3 รายการ รวม 185 ลิตร · วันนี้รออนุมัติ 2 รายการ',
+      items: [], requestedBy: 'ระบบเบิกน้ำมัน', createdAt: now,
+      metadata: {
+        test: 'true', slot: '10:00', date: '2026-11-25', windowStart: '2026-11-24T18:00:00', windowEnd: '2026-11-25T10:00:00',
+        newCount: '3', newLiters: '185', newWorkshop: '1', newSite: '2',
+        dayCount: '3', dayLiters: '185', dayPending: '2', dayApproved: '1', dayFulfilled: '0', dayRejected: '0',
+        rows: JSON.stringify([
+          { requestNo: 'FUEL-TEST-0001', vehicleCode: '50-0040-10-0001', vehicleName: 'Pickup 4-door', requester: 'ผู้ทดสอบ หนึ่ง', project: 'M-019', fuelType: 'Diesel', liters: 45, status: 'pending', location: 'Workshop', time: '07:42' },
+          { requestNo: 'FUEL-TEST-0002', vehicleCode: 'TRU-RENT-26-032', vehicleName: '6 ล้อ เช่า', requester: 'ผู้ทดสอบ สอง', project: 'J-400', fuelType: 'Diesel', liters: 80, status: 'approved', location: 'Site', time: '08:15' },
+          { requestNo: 'FUEL-TEST-0003', vehicleCode: 'ME-26-0018', vehicleName: 'Generator', requester: 'ผู้ทดสอบ สาม', project: 'J-400', fuelType: 'Diesel', liters: 60, status: 'pending', location: 'Site', time: '09:30' }
+        ])
+      }
+    }
+  ],
   mcp: [
     'maintenance.line.notification',
     {

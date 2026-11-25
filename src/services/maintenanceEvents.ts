@@ -8,6 +8,7 @@ import { pushAlertToGroups } from './maintenanceLocalTools'
 import { resolvePersonName } from './hrDirectory'
 import { buildFuelRequestCard, fuelRequestCardToText, type FuelUsageSummary } from './fuelRequestFlex'
 import { buildPmDigestCard, parsePmDigest, pmDigestToText } from './pmScheduleFlex'
+import { buildFuelDigestCard, fuelDigestToText, parseFuelDigest } from './fuelDigestFlex'
 
 // ---------------------------------------------------------------------------
 // Consumer ของ RabbitMQ: รับ event จากระบบซ่อมบำรุง (exchange "maintenance") แล้วแจ้งเข้าไลน์กลุ่มของทีม
@@ -560,6 +561,22 @@ function fromNotificationPayload(e: Json): GroupAlert {
     return { ...base, custom: buildPmDigestCard(pm), customText: pmDigestToText(pm) }
   }
 
+  // สรุปขอเติมน้ำมันตามรอบ (fuel-service ส่งตามเวลาที่ตั้งในหน้าเว็บ) มีการ์ดของตัวเองเช่นกัน
+  const fuelDigest = parseFuelDigest(e, config.maintenance.webUrl)
+  if (fuelDigest) {
+    const base = normalizeAlert(
+      {
+        title: str(e.title) || 'สรุปขอเติมน้ำมัน',
+        message: str(e.message) || '-',
+        severity,
+        items: Array.isArray(e.items) ? e.items : [],
+        reference: undefined
+      },
+      str(e.requestedBy) || 'ระบบเบิกน้ำมัน'
+    )
+    return { ...base, custom: buildFuelDigestCard(fuelDigest), customText: fuelDigestToText(fuelDigest) }
+  }
+
   return normalizeAlert(
     {
       title: str(e.title) || 'แจ้งเตือนจากระบบซ่อมบำรุง',
@@ -622,6 +639,14 @@ async function handleMessage(msg: ConsumeMessage): Promise<void> {
   if (key === 'filestorage.file.uploaded') {
     const outcome = attachUploadedPhoto(payload)
     if (outcome === 'attached') console.log(`[MT-events] ${key}: แนบรูป ${str(payload.fileName)} ให้ใบงาน ${shortId(payload.referenceId)}`)
+    return
+  }
+
+  // ขอเบิกน้ำมันที่หน้าเว็บตั้งไว้ว่า "สรุปตามรอบ" (หรือปิดแจ้งเตือน): fuel-service ติดธง suppressLineCard มากับ event
+  // ไม่ต้องทำการ์ดรายคำขอ รอการ์ดสรุปตามรอบ (category fuel_request_digest) แทน ข้ามก่อนไปถาม HR/รายงานให้เปลืองเปล่า
+  if (key === 'fuel.requested' && payload.suppressLineCard === true) {
+    stats.skipped++
+    console.log(`[MT-events] ข้าม ${key} ${str(payload.requestNo)}: ตั้งค่าไว้ไม่ส่งการ์ดรายคำขอ (สรุปตามรอบ/ปิดแจ้งเตือน)`)
     return
   }
 

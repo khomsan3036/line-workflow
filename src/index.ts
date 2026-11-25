@@ -13,6 +13,8 @@ import { startScheduler } from './scheduler'
 import { maintenanceMcpStatus } from './services/maintenanceMcp'
 import { attendanceAvailable, crossCheckHealth } from './services/attendance'
 import { maintenanceEventsStatus, startMaintenanceEventConsumer } from './services/maintenanceEvents'
+import { listMaintenanceGroups } from './services/maintenanceLocalTools'
+import { listActiveGroups } from './services/groups'
 import { complaintEventsStatus, startComplaintEventConsumer } from './services/complaintEvents'
 import { startStoreRequestEventConsumer, storeRequestEventsStatus } from './services/storeRequestEvents'
 import { startGoodCodeEventConsumer, goodCodeEventsStatus } from './services/goodCodeEvents'
@@ -167,6 +169,33 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
 }
 root.get('/health', healthHandler)
 app.get('/health', healthHandler)
+
+// ---------------------------------------------------------------------------
+// 4.2) API ภายใน: ทะเบียนกลุ่ม LINE ที่บอทของทีมซ่อมบำรุงอยู่
+//      ผู้เรียกคือ maintenance-fuel-service (ใน docker network เดียวกัน) เพื่อให้หน้า "การแจ้งเตือน LINE"
+//      ของเว็บซ่อมบำรุงมีตัวเลือกกลุ่มปลายทาง ไม่ได้เปิดผ่าน nginx gateway (gateway เปิดเฉพาะ /webhook)
+//      ต้องส่ง X-Service-Token = INTERNAL_API_TOKEN; ไม่ได้ตั้ง token = ปิด endpoint
+//      isDefault = กลุ่มที่ได้การ์ดซ่อมบำรุงอยู่แล้วเมื่อไม่ระบุปลายทาง (listMaintenanceGroups)
+// ---------------------------------------------------------------------------
+root.get('/internal/mt-groups', (req: Request, res: Response, next: NextFunction) => {
+  const token = config.maintenance.internalApiToken
+  if (!token) {
+    res.status(404).json({ error: 'not enabled' })
+    return
+  }
+  if (req.get('X-Service-Token') !== token) {
+    res.status(401).json({ error: 'invalid service token' })
+    return
+  }
+  Promise.all([listActiveGroups(config.maintenance.channel), listMaintenanceGroups()])
+    .then(([groups, defaults]) => {
+      const defaultIds = new Set(defaults.map((g) => g.group_id))
+      res.json({
+        groups: groups.map((g) => ({ id: g.group_id, name: g.group_name ?? g.group_id, isDefault: defaultIds.has(g.group_id) }))
+      })
+    })
+    .catch(next)
+})
 
 // ---------------------------------------------------------------------------
 // 5) หน้าเว็บ
