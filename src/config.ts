@@ -594,6 +594,12 @@ export const config = {
     //   ก่อนเวลานั้นกี่นาที (ค่าเริ่มต้น 15 -> ส่ง 15:15) 0 = ปิดรอบนี้
     cleaningDayStartTime: normalizeTime(process.env.CLEANING_DAY_START_TIME, '15:30'),
     cleaningDayStartLeadMin: Math.min(180, Math.max(0, Number(process.env.CLEANING_DAY_START_LEAD_MIN ?? 15) || 0)),
+    //   CLEANING_DAY_CONFIG_API_URL = feed ของหน้าตั้งค่า Cleaning Day ใน Integra (integra-notification-service) เช่น
+    //   https://qtecintegra.com/api/notification-service/api/cleaning-day-schedules/feed
+    //   ตั้งค่าไว้ = ใช้วัน/เวลา/รอบ/ปลายทาง/ข้อความ/Lead Team จาก Integra และตรวจทุกนาที (CLEANING_DAY_CRON / _DAYS_BEFORE /
+    //   _START_TIME / _START_LEAD_MIN / _MESSAGE ด้านบนไม่ถูกใช้) ปลายทางของรายการว่าง = ใช้ CLEANING_DAY_GROUP_IDS
+    //   ว่าง = ทำงานแบบเดิมจาก .env ทั้งหมด
+    cleaningDayConfigUrl: stripSlash((process.env.CLEANING_DAY_CONFIG_API_URL ?? '').trim()),
     cleaningDayMessage:
       (process.env.CLEANING_DAY_MESSAGE ?? '').trim() ||
       'ขอความร่วมมือพนักงานทุกท่าน ร่วมกันจัดระเบียบและทำความสะอาดพื้นที่ทำงานส่วนตัว รวมถึงพื้นที่ส่วนกลาง ในกิจกรรม Monthly Cleaning Day ประจำเดือนนี้ เพื่อสร้างบรรยากาศการทำงานที่สดชื่นและปลอดภัยสำหรับทุกคน'

@@ -4,7 +4,8 @@ import { runDailySummary } from './jobs/dailySummary'
 import { printAttendanceReport, runAttendanceReport } from './jobs/attendanceReport'
 import { printMaintenanceReport, runMaintenanceReport, type MaintenanceReportKind } from './jobs/maintenanceReport'
 import { runOvertimeReport } from './jobs/overtimeReport'
-import { runCleaningDayReminder } from './jobs/cleaningDayReminder'
+import { runCleaningDayReminder, runCleaningDayTick } from './jobs/cleaningDayReminder'
+import { cleaningDayConfigEnabled } from './services/cleaningDayConfig'
 import { runAbsenceReport } from './jobs/absenceReport'
 import { runAbsenceStoreReport } from './jobs/absenceStoreReport'
 import { runLatenessReport } from './jobs/latenessReport'
@@ -209,9 +210,31 @@ export function startScheduler(): void {
     console.log(`[scheduler] ตั้งงานพนักงานเข้างานดีเด่นไว้ที่ "${perfectCron}" (${tz}) -> ${config.scheduler.perfectReportTargets.length} ปลายทาง`)
   }
 
+  // ประกาศ Cleaning Day ตามการตั้งค่าใน Integra (CLEANING_DAY_CONFIG_API_URL): ตรวจทุกนาที แต่ละรายการตัดสินจากวัน/เวลาที่ handler ตั้ง
+  // ตั้งไว้แล้ว = ไม่ใช้ CLEANING_DAY_CRON และรอบก่อนเริ่มจาก .env ด้านล่าง (กันส่งซ้ำสองทาง)
+  if (cleaningDayConfigEnabled()) {
+    cron.schedule(
+      '* * * * *',
+      async () => {
+        try {
+          const outcomes = await runCleaningDayTick({ dedupe: true, sentBy: 'scheduler:cleaning-day' })
+          for (const o of outcomes) {
+            for (const t of o.targets) console.log(`[scheduler]   ${o.schedule} (${o.notice.kind}) -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+          }
+        } catch (err) {
+          console.error('[scheduler] งานประกาศ Cleaning Day (Integra) ผิดพลาด:', err instanceof Error ? err.message : err)
+        }
+      },
+      { timezone: tz }
+    )
+    console.log(`[scheduler] ตั้งงานประกาศ Cleaning Day ตามการตั้งค่าใน Integra ไว้ทุกนาที (${tz})`)
+  }
+
   // ประกาศ "Monthly Cleaning Day": ตรวจทุกรอบ (ค่าเริ่มต้น 08:00 และ 17:00) งานตัดสินเองว่าวันนี้ต้องแจ้งไหม ว่าง = ปิด
   const cleaningCron = config.scheduler.cleaningDayCron
-  if (cleaningCron && !cron.validate(cleaningCron)) {
+  if (cleaningDayConfigEnabled()) {
+    // ใช้การตั้งค่าจาก Integra แทน (ด้านบน)
+  } else if (cleaningCron && !cron.validate(cleaningCron)) {
     console.error(`[scheduler] รูปแบบ CLEANING_DAY_CRON ไม่ถูกต้อง: ${cleaningCron}`)
   } else if (cleaningCron && config.scheduler.cleaningDayTargets.length > 0) {
     cron.schedule(
@@ -232,7 +255,7 @@ export function startScheduler(): void {
 
   // รอบ "ก่อนเริ่มกิจกรรม" ของ Cleaning Day: ทุกวันเสาร์เวลา (CLEANING_DAY_START_TIME - CLEANING_DAY_START_LEAD_MIN) งานส่งเฉพาะเสาร์สุดท้าย
   // ใช้ปลายทางเดียวกับประกาศ ว่าง / LEAD_MIN = 0 = ปิด
-  if (config.scheduler.cleaningDayStartLeadMin > 0 && config.scheduler.cleaningDayTargets.length > 0) {
+  if (!cleaningDayConfigEnabled() && config.scheduler.cleaningDayStartLeadMin > 0 && config.scheduler.cleaningDayTargets.length > 0) {
     const [h, m] = config.scheduler.cleaningDayStartTime.split(':').map(Number)
     const total = (h * 60 + m - config.scheduler.cleaningDayStartLeadMin + 1440) % 1440
     const startCron = `${total % 60} ${Math.floor(total / 60)} * * 6`

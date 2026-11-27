@@ -1,5 +1,6 @@
 import { pool } from '../src/db'
-import { cleaningDayNoticeFor, lastSaturdayOfMonth, runCleaningDayReminder } from '../src/jobs/cleaningDayReminder'
+import { cleaningDayNoticeFor, lastSaturdayOfMonth, runCleaningDayReminder, runCleaningDayTick } from '../src/jobs/cleaningDayReminder'
+import { cleaningDayConfigEnabled } from '../src/services/cleaningDayConfig'
 import { config } from '../src/config'
 import { formatThaiDate, todayLocal, addDays } from '../src/services/attendanceQuery'
 import type { CleaningDaySlot } from '../src/services/cleaningDayFlex'
@@ -13,6 +14,10 @@ import type { CleaningDaySlot } from '../src/services/cleaningDayFlex'
 //   npm run cleaning-day -- --date=2026-10-31 --slot=start --to=U...   การ์ด "อีก 15 นาทีเริ่ม" ของวันเสาร์นั้น
 //   npm run cleaning-day -- --schedule                     แสดงตารางแจ้งเตือนของเดือนนี้และเดือนหน้า
 //   npm run cleaning-day -- --json                         พิมพ์ Flex JSON (ไปวางใน Flex Simulator ได้)
+//
+// เมื่อตั้ง CLEANING_DAY_CONFIG_API_URL (ใช้การตั้งค่าจาก Integra) ใช้ --time แทน --slot:
+//   npm run cleaning-day -- --dry-run --date=2026-11-24 --time=08:00     การ์ดที่รอบนั้นต้องส่ง (ทุกรายการที่เปิดใช้งาน)
+//   npm run cleaning-day -- --date=2026-11-27 --time=12:45 --to=U...     ส่งจริงไปผู้ใช้ทดสอบ
 // ---------------------------------------------------------------------------
 
 function arg(name: string): string | undefined {
@@ -50,6 +55,23 @@ function printSchedule(from: string): void {
 }
 
 async function main(): Promise<void> {
+  if (cleaningDayConfigEnabled()) {
+    const outcomes = await runCleaningDayTick({
+      date: arg('date'),
+      time: arg('time'),
+      targets: arg('to')?.split(',').map((s) => s.trim()).filter(Boolean),
+      dryRun: process.argv.includes('--dry-run'),
+      sentBy: 'script:cleaning-day'
+    })
+    if (outcomes.length === 0) console.log('[cleaning-day] รอบนี้ไม่มีการ์ดต้องส่ง (ตรวจวัน/เวลาด้วย --date= --time=)')
+    for (const o of outcomes) {
+      console.log(`\n[${o.schedule}] ${o.card.altText}\n`)
+      if (process.argv.includes('--json')) console.log(JSON.stringify(o.card.contents, null, 2))
+      if (o.targets.length === 0) console.log('  [i] ไม่มีปลายทาง (ตั้งในหน้า Integra หรือใส่ --to=Cxxxx) จึงยังไม่ส่ง\n')
+      for (const t of o.targets) console.log(`  -> ${t.name}: ${t.status}${t.error ? ` (${t.error})` : ''}`)
+    }
+    return
+  }
   if (process.argv.includes('--schedule')) {
     printSchedule(arg('date') ?? todayLocal())
     return
